@@ -5,6 +5,18 @@ npm-debug.log*
 # Env files
 backend/.env
 frontend/.env
+backend/.env.local
+frontend/.env.local
+.env
+.env.*
+
+# Secrets and credentials
+*.pem
+*.key
+*.crt
+secrets/
+backend/keys/
+frontend/keys/
 
 # Logs
 logs/
