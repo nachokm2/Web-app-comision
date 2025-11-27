@@ -1,6 +1,7 @@
 import db from '../db/pool.js';
 
 const SCHEMA = 'comision_ua';
+const schemaRef = `"${SCHEMA}"`;
 const EXCLUDED_TABLES = new Set(['users']);
 const SAFE_IDENTIFIER = /^[a-zA-Z0-9_]+$/;
 
@@ -25,7 +26,6 @@ export async function getSchemaTables () {
 
 export async function getAllTableData () {
   const tables = await getSchemaTables();
-  const schemaRef = `"${SCHEMA}"`;
   const entries = await Promise.all(
     tables.map(async (tableName) => {
       const safeName = quoteIdentifier(tableName);
@@ -37,7 +37,6 @@ export async function getAllTableData () {
 }
 
 export async function getCasesByAdvisor () {
-  const schemaRef = `"${SCHEMA}"`;
   const { rows } = await db.query(`
     WITH casos AS (
       SELECT
@@ -99,5 +98,59 @@ export async function getCasesByAdvisor () {
     total_valor_comision: Number(row.total_valor_comision) || 0,
     total_matricula: Number(row.total_matricula) || 0,
     casos: Array.isArray(row.casos) ? row.casos : JSON.parse(row.casos || '[]')
+  }));
+}
+
+export async function getStudentEntries () {
+  const { rows } = await db.query(`
+    SELECT
+      e.rut,
+      e.nombres,
+      e.apellidos,
+      e.correo AS correo_estudiante,
+      e.telefono,
+      c.id AS comision_id,
+      c.estado_de_pago,
+      c.fecha_matricula,
+      c.sede,
+      c.valor_comision,
+      c.matricula,
+      a.id AS asesor_id,
+      a.nombre_completo AS asesor_nombre,
+      a.correo AS asesor_correo,
+      p.cod_banner,
+      p.nombre AS programa_nombre,
+      ARRAY_REMOVE(ARRAY_AGG(DISTINCT cat.nombre_del_caso), NULL) AS categorias
+    FROM ${schemaRef}."estudiantes" e
+    LEFT JOIN ${schemaRef}."comisiones" c ON c.rut_estudiante = e.rut
+    LEFT JOIN ${schemaRef}."asesores" a ON a.id = c.id_asesor
+    LEFT JOIN ${schemaRef}."programas" p ON p.cod_banner = c.cod_programa
+    LEFT JOIN ${schemaRef}."categoria_comision" cc ON cc.id_comision = c.id
+    LEFT JOIN ${schemaRef}."categorias" cat ON cat.id = cc.id_categoria
+    GROUP BY e.rut, e.nombres, e.apellidos, e.correo, e.telefono,
+      c.id, c.estado_de_pago, c.fecha_matricula, c.sede, c.valor_comision, c.matricula,
+      a.id, a.nombre_completo, a.correo,
+      p.cod_banner, p.nombre
+    ORDER BY COALESCE(c.fecha_matricula, DATE '1900-01-01') DESC, e.apellidos, e.nombres
+  `);
+
+  return rows.map((row) => ({
+    rut: row.rut,
+    nombres: row.nombres,
+    apellidos: row.apellidos,
+    correo: row.correo_estudiante,
+    telefono: row.telefono,
+    comision_id: row.comision_id,
+    estado_pago: row.estado_de_pago,
+    fecha_matricula: row.fecha_matricula,
+    sede: row.sede,
+    valor_comision: row.valor_comision ? Number(row.valor_comision) : null,
+    matricula: row.matricula ? Number(row.matricula) : null,
+    asesor_id: row.asesor_id,
+    asesor_nombre: row.asesor_nombre,
+    asesor_correo: row.asesor_correo,
+    cod_programa: row.cod_banner,
+    programa_nombre: row.programa_nombre,
+    categorias: Array.isArray(row.categorias) ? row.categorias : []
   }));
 }

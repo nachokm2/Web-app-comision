@@ -9,7 +9,12 @@ const apiClient = axios.create({
 });
 
 function parseError (error) {
-  return new Error(error.response?.data?.message || 'Error inesperado');
+  const responseData = error.response?.data;
+  const validationMessage = Array.isArray(responseData?.errors) && responseData.errors.length > 0
+    ? responseData.errors[0].msg
+    : null;
+  const message = responseData?.message || validationMessage || 'Error inesperado';
+  return new Error(message);
 }
 
 export async function loginRequest (credentials) {
@@ -76,6 +81,15 @@ export async function deleteRecord (recordId) {
 export async function fetchAdminSchemaSnapshot () {
   try {
     const { data } = await apiClient.get('/admin/schema');
+    return data;
+  } catch (error) {
+    throw parseError(error);
+  }
+}
+
+export async function createStudentEntry (payload) {
+  try {
+    const { data } = await apiClient.post('/admin/students', payload);
     return data;
   } catch (error) {
     throw parseError(error);

@@ -7,7 +7,8 @@
   "scripts": {
     "start": "node src/server.js",
     "dev": "nodemon --watch src src/server.js",
-    "lint": "eslint \"src/**/*.js\""
+    "lint": "eslint \"src/**/*.js\"",
+    "seed:advisors": "node ./scripts/load-advisors.js"
   },
   "engines": {
     "node": ">=18.18.0"
