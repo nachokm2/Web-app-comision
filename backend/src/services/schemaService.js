@@ -2,7 +2,7 @@ import db from '../db/pool.js';
 
 const SCHEMA = 'comision_ua';
 const schemaRef = `"${SCHEMA}"`;
-const EXCLUDED_TABLES = new Set(['users']);
+const EXCLUDED_TABLES = new Set(['usuarios']);
 const SAFE_IDENTIFIER = /^[a-zA-Z0-9_]+$/;
 
 
@@ -49,7 +49,7 @@ async function getAdvisorDirectory () {
       telefono,
       rut,
       sede
-    FROM ${schemaRef}."users"
+    FROM ${schemaRef}."usuarios"
     WHERE is_asesor = TRUE AND legacy_asesor_id IS NOT NULL
     ORDER BY nombre_completo
   `);
@@ -108,7 +108,7 @@ export async function getCasesByAdvisor () {
         ) FILTER (WHERE casos.id IS NOT NULL),
         '[]'::json
       ) AS casos
-    FROM ${schemaRef}."users" a
+    FROM ${schemaRef}."usuarios" a
     LEFT JOIN casos ON casos.id_asesor = a.legacy_asesor_id
     WHERE a.is_asesor = TRUE AND a.legacy_asesor_id IS NOT NULL
     GROUP BY a.id, a.legacy_asesor_id, a.nombre_completo, a.correo_institucional, a.sede, a.correo_personal, a.telefono, a.rut
@@ -153,7 +153,7 @@ export async function getStudentEntries () {
       ARRAY_REMOVE(ARRAY_AGG(DISTINCT cat.nombre_del_caso), NULL) AS categorias
     FROM ${schemaRef}."estudiantes" e
     LEFT JOIN ${schemaRef}."comisiones" c ON c.rut_estudiante = e.rut
-    LEFT JOIN ${schemaRef}."users" a ON a.legacy_asesor_id = c.id_asesor AND a.is_asesor = TRUE
+    LEFT JOIN ${schemaRef}."usuarios" a ON a.legacy_asesor_id = c.id_asesor AND a.is_asesor = TRUE
     LEFT JOIN ${schemaRef}."programas" p ON p.cod_banner = c.cod_programa
     LEFT JOIN ${schemaRef}."categoria_comision" cc ON cc.id_comision = c.id
     LEFT JOIN ${schemaRef}."categorias" cat ON cat.id = cc.id_categoria

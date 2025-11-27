@@ -4,7 +4,7 @@ import { validateCredentials, findUserById } from '../services/userService.js';
 
 function buildToken (user) {
   return jwt.sign(
-    { sub: user.id, username: user.username, role: user.role },
+    { sub: user.id, username: user.username, rol: user.rol },
     config.jwtSecret,
     { expiresIn: `${config.sessionTtlMinutes}m` }
   );

@@ -5,12 +5,12 @@ import db from '../src/db/pool.js';
 async function run () {
   console.log('Inicializando esquema base...');
 
+
   const statements = `
     CREATE TABLE IF NOT EXISTS users (
       id UUID PRIMARY KEY DEFAULT (md5(random()::text || clock_timestamp()::text))::uuid,
       username TEXT UNIQUE NOT NULL,
       password_hash TEXT NOT NULL,
-      role TEXT NOT NULL DEFAULT 'viewer',
       nombre_completo VARCHAR(160),
       correo_institucional VARCHAR(160),
       correo_personal VARCHAR(160),
@@ -21,6 +21,17 @@ async function run () {
       is_asesor BOOLEAN NOT NULL DEFAULT FALSE,
       created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
       updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    );
+
+    CREATE TABLE IF NOT EXISTS roles (
+      id SERIAL PRIMARY KEY,
+      nombre TEXT UNIQUE NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS usuario_rol (
+      usuario_id UUID REFERENCES users(id) ON DELETE CASCADE,
+      rol_id INTEGER REFERENCES roles(id) ON DELETE CASCADE,
+      PRIMARY KEY (usuario_id, rol_id)
     );
 
     CREATE TABLE IF NOT EXISTS records (
@@ -56,22 +67,56 @@ async function run () {
   await db.query(statements);
   console.log('Esquema listo.');
 
+  // Migrar roles existentes de users.role a la nueva estructura
+  // 1. Insertar roles únicos en la tabla roles
+  await db.query(`
+    INSERT INTO roles (nombre)
+    SELECT DISTINCT role FROM users WHERE role IS NOT NULL
+    ON CONFLICT (nombre) DO NOTHING;
+  `);
+
+  // 2. Insertar asignaciones usuario_rol
+  await db.query(`
+    INSERT INTO usuario_rol (usuario_id, rol_id)
+    SELECT u.id, r.id
+    FROM users u
+    JOIN roles r ON r.nombre = u.role
+    WHERE u.role IS NOT NULL
+    ON CONFLICT DO NOTHING;
+  `);
+
+  // 3. Eliminar columna role de users
+  const colCheck = await db.query(`SELECT column_name FROM information_schema.columns WHERE table_name = 'users' AND column_name = 'role'`);
+  if (colCheck.rows.length > 0) {
+    await db.query('ALTER TABLE users DROP COLUMN role');
+    console.log('Columna role eliminada de users.');
+  }
+
   const seedUser = process.env.ADMIN_SEED_USER?.trim();
   const seedPass = process.env.ADMIN_SEED_PASSWORD;
 
   if (seedUser && seedPass) {
     console.log(`Creando/actualizando usuario seed ${seedUser} (len=${seedPass.length})...`);
     const passwordHash = await bcrypt.hash(seedPass, 12);
-    await db.query(
-      `INSERT INTO users (username, password_hash, role)
-       VALUES ($1, $2, 'admin')
+    // Crear o actualizar usuario
+    const { rows } = await db.query(
+      `INSERT INTO users (username, password_hash)
+       VALUES ($1, $2)
        ON CONFLICT (username) DO UPDATE SET
          password_hash = EXCLUDED.password_hash,
-         role = EXCLUDED.role,
-         updated_at = now()`,
+         updated_at = now()
+       RETURNING id`,
       [seedUser, passwordHash]
     );
-    console.log('Usuario seed listo/actualizado.');
+    const userId = rows[0].id;
+    // Asignar rol admin (id=2)
+    await db.query(
+      `INSERT INTO usuario_rol (usuario_id, rol_id)
+       VALUES ($1, 2)
+       ON CONFLICT (usuario_id, rol_id) DO NOTHING`,
+      [userId]
+    );
+    console.log('Usuario seed listo/actualizado con rol admin.');
   } else {
     console.log('Variables ADMIN_SEED_USER / ADMIN_SEED_PASSWORD no definidas, no se creó usuario seed.');
   }

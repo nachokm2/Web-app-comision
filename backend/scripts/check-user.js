@@ -10,7 +10,11 @@ if (!username) {
 
 async function run () {
   const { rows } = await db.query(
-    'SELECT id, username, role, password_hash, created_at, updated_at FROM users WHERE username = $1',
+    `SELECT u.id, u.username, u.password_hash, r.nombre as rol
+     FROM usuarios u
+    LEFT JOIN usuario_rol ur ON ur.id_usuario = u.id
+    LEFT JOIN roles r ON r.id = ur.id_rol
+     WHERE u.username = $1`,
     [username]
   );
   if (!rows.length) {
