@@ -95,3 +95,20 @@ export async function createStudentEntry (payload) {
     throw parseError(error);
   }
 }
+
+export async function updateStudentEntry (entryId, payload) {
+  try {
+    const { data } = await apiClient.put(`/admin/students/${entryId}`, payload);
+    return data;
+  } catch (error) {
+    throw parseError(error);
+  }
+}
+
+export async function deleteStudentEntry (entryId) {
+  try {
+    await apiClient.delete(`/admin/students/${entryId}`);
+  } catch (error) {
+    throw parseError(error);
+  }
+}

@@ -5,6 +5,7 @@ const schemaRef = `"${SCHEMA}"`;
 const EXCLUDED_TABLES = new Set(['users']);
 const SAFE_IDENTIFIER = /^[a-zA-Z0-9_]+$/;
 
+
 function quoteIdentifier (identifier) {
   if (!SAFE_IDENTIFIER.test(identifier)) {
     throw new Error(`Identificador inválido: ${identifier}`);
@@ -33,7 +34,26 @@ export async function getAllTableData () {
       return [tableName, rows];
     })
   );
-  return Object.fromEntries(entries);
+  const data = Object.fromEntries(entries);
+  data.asesores = await getAdvisorDirectory();
+  return data;
+}
+
+async function getAdvisorDirectory () {
+  const { rows } = await db.query(`
+    SELECT
+      legacy_asesor_id AS id,
+      nombre_completo,
+      correo_institucional AS correo,
+      correo_personal,
+      telefono,
+      rut,
+      sede
+    FROM ${schemaRef}."users"
+    WHERE is_asesor = TRUE AND legacy_asesor_id IS NOT NULL
+    ORDER BY nombre_completo
+  `);
+  return rows;
 }
 
 export async function getCasesByAdvisor () {
@@ -61,9 +81,13 @@ export async function getCasesByAdvisor () {
         c.fecha_matricula, c.sede, e.nombres, e.apellidos, c.rut_estudiante, p.nombre
     )
     SELECT
-      a.id AS asesor_id,
+      a.legacy_asesor_id AS asesor_id,
       a.nombre_completo,
-      a.correo,
+      a.correo_institucional AS correo,
+      a.sede,
+      a.correo_personal,
+      a.telefono,
+      a.rut,
       COUNT(casos.id) AS total_casos,
       COALESCE(SUM(casos.valor_comision), 0) AS total_valor_comision,
       COALESCE(SUM(casos.matricula), 0) AS total_matricula,
@@ -84,9 +108,10 @@ export async function getCasesByAdvisor () {
         ) FILTER (WHERE casos.id IS NOT NULL),
         '[]'::json
       ) AS casos
-    FROM ${schemaRef}."asesores" a
-    LEFT JOIN casos ON casos.id_asesor = a.id
-    GROUP BY a.id
+    FROM ${schemaRef}."users" a
+    LEFT JOIN casos ON casos.id_asesor = a.legacy_asesor_id
+    WHERE a.is_asesor = TRUE AND a.legacy_asesor_id IS NOT NULL
+    GROUP BY a.id, a.legacy_asesor_id, a.nombre_completo, a.correo_institucional, a.sede, a.correo_personal, a.telefono, a.rut
     ORDER BY COUNT(casos.id) DESC, a.nombre_completo
   `);
 
@@ -94,6 +119,11 @@ export async function getCasesByAdvisor () {
     asesor_id: row.asesor_id,
     nombre_completo: row.nombre_completo,
     correo: row.correo,
+    institucion: row.sede,
+    sede: row.sede,
+    correo_personal: row.correo_personal,
+    telefono: row.telefono,
+    rut: row.rut,
     total_casos: Number(row.total_casos) || 0,
     total_valor_comision: Number(row.total_valor_comision) || 0,
     total_matricula: Number(row.total_matricula) || 0,
@@ -115,21 +145,21 @@ export async function getStudentEntries () {
       c.sede,
       c.valor_comision,
       c.matricula,
-      a.id AS asesor_id,
+      c.id_asesor AS asesor_id,
       a.nombre_completo AS asesor_nombre,
-      a.correo AS asesor_correo,
+      a.correo_institucional AS asesor_correo,
       p.cod_banner,
       p.nombre AS programa_nombre,
       ARRAY_REMOVE(ARRAY_AGG(DISTINCT cat.nombre_del_caso), NULL) AS categorias
     FROM ${schemaRef}."estudiantes" e
     LEFT JOIN ${schemaRef}."comisiones" c ON c.rut_estudiante = e.rut
-    LEFT JOIN ${schemaRef}."asesores" a ON a.id = c.id_asesor
+    LEFT JOIN ${schemaRef}."users" a ON a.legacy_asesor_id = c.id_asesor AND a.is_asesor = TRUE
     LEFT JOIN ${schemaRef}."programas" p ON p.cod_banner = c.cod_programa
     LEFT JOIN ${schemaRef}."categoria_comision" cc ON cc.id_comision = c.id
     LEFT JOIN ${schemaRef}."categorias" cat ON cat.id = cc.id_categoria
     GROUP BY e.rut, e.nombres, e.apellidos, e.correo, e.telefono,
       c.id, c.estado_de_pago, c.fecha_matricula, c.sede, c.valor_comision, c.matricula,
-      a.id, a.nombre_completo, a.correo,
+      c.id_asesor, a.nombre_completo, a.correo_institucional,
       p.cod_banner, p.nombre
     ORDER BY COALESCE(c.fecha_matricula, DATE '1900-01-01') DESC, e.apellidos, e.nombres
   `);

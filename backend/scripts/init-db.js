@@ -11,6 +11,14 @@ async function run () {
       username TEXT UNIQUE NOT NULL,
       password_hash TEXT NOT NULL,
       role TEXT NOT NULL DEFAULT 'viewer',
+      nombre_completo VARCHAR(160),
+      correo_institucional VARCHAR(160),
+      correo_personal VARCHAR(160),
+      telefono VARCHAR(60),
+      rut VARCHAR(20),
+      sede VARCHAR(120),
+      legacy_asesor_id INTEGER UNIQUE,
+      is_asesor BOOLEAN NOT NULL DEFAULT FALSE,
       created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
       updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
     );
