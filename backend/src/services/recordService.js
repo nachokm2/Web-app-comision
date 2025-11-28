@@ -14,43 +14,44 @@ export async function getRecordsForUser (userId) {
   );
   if (!userRows[0]) return [];
   const { bx24_id, roles } = userRows[0];
-  // Query base enriquecida con joins
+
   const baseQuery = `
     SELECT c.id,
-           c.valor_comision AS monto,
-           c.version_programa AS version,
+           COALESCE(NULLIF(TRIM(CONCAT(e.nombres, ' ', e.apellidos)), ''), e.nombres, c.cod_programa) AS title,
+           COALESCE(p.nombre, c.cod_programa) AS category,
+           c.valor_comision AS amount,
+           COALESCE(c.estado_de_pago::text, 'pending') AS status,
+           c.fecha_matricula AS created_at,
            c.rut_estudiante,
-           e.nombres AS nombre_estudiante,
-           e.apellidos AS apellido_estudiante,
-           u.nombre_completo AS asesor,
            c.cod_programa,
-           p.nombre AS nombre_programa
+           c.version_programa,
+           u.nombre_completo AS asesor
     FROM comisiones c
     LEFT JOIN estudiantes e ON c.rut_estudiante = e.rut
     LEFT JOIN usuarios u ON c.id_asesor = u.bx24_id
     LEFT JOIN programas p ON c.cod_programa = p.cod_programa
   `;
+
   let rows;
-  if (roles && (roles.includes('ADMIN') || roles.includes('admin'))) {
-    // Admin ve todas
+  const isAdmin = Array.isArray(roles) && roles.some((role) => role?.toUpperCase() === 'ADMIN');
+  if (isAdmin) {
     ({ rows } = await db.query(baseQuery + 'ORDER BY c.fecha_matricula DESC'));
   } else {
     if (!bx24_id) return [];
     ({ rows } = await db.query(baseQuery + 'WHERE c.id_asesor = $1 ORDER BY c.fecha_matricula DESC', [bx24_id]));
   }
-  // Mapeo para frontend
-  return rows.map(r => ({
+
+  return rows.map((r) => ({
     id: r.id,
-    titulo: r.nombre_estudiante ? `${r.nombre_estudiante} ${r.apellido_estudiante}` : r.cod_programa,
-    categoria: r.nombre_programa || r.cod_programa,
-    monto: r.monto,
-    estado: r.estado_de_pago || '',
-    creado: r.fecha_matricula || '',
-    // Extras para edición/detalle
-    rut: r.rut_estudiante,
-    asesor: r.asesor,
-    programa: r.nombre_programa,
-    version: r.version
+    title: r.title || 'Sin título',
+    category: r.category || 'Sin categoría',
+    amount: Number(r.amount) || 0,
+    status: r.status?.toLowerCase() || 'pending',
+    created_at: r.created_at || new Date().toISOString(),
+    rut_estudiante: r.rut_estudiante,
+    cod_programa: r.cod_programa,
+    version_programa: r.version_programa,
+    asesor: r.asesor
   }));
 }
 
