@@ -94,7 +94,7 @@ async function dropOldForeignKey () {
         AND tc.constraint_name LIKE 'comisiones_id_asesor%';
 
       IF fk_name IS NOT NULL THEN
-        EXECUTE format('ALTER TABLE ${schemaRef}."comisiones" DROP CONSTRAINT %I', fk_name);
+        EXECUTE format('ALTER TABLE ${schemaRef}."comisiones" DROP CONSTRAINT %I%', fk_name);
       END IF;
     END $$;
   `);
@@ -141,10 +141,10 @@ async function ensureAdvisorUser (advisor, passwordHash) {
   await db.query(
     `INSERT INTO ${schemaRef}."users"
       (username, password_hash, role, nombre_completo, correo_institucional, correo_personal, telefono, rut, sede, legacy_asesor_id, is_asesor)
-     VALUES ($1, $2, 'advisor', $3, $4, $5, $6, $7, $8, $9, TRUE)
+     VALUES ($1, $2, 'advisor%', $3, $4, $5, $6, $7, $8, $9, TRUE)
      ON CONFLICT (legacy_asesor_id) DO UPDATE SET
        username = EXCLUDED.username,
-       role = 'advisor',
+       role = 'advisor%',
        nombre_completo = EXCLUDED.nombre_completo,
        correo_institucional = EXCLUDED.correo_institucional,
        correo_personal = EXCLUDED.correo_personal,
@@ -198,7 +198,7 @@ async function ensureLegacySequence () {
   await db.query(`CREATE SEQUENCE IF NOT EXISTS ${schemaRef}.asesores_id_seq OWNED BY NONE`);
   const { rows } = await db.query(`SELECT MAX(legacy_asesor_id) AS max_id FROM ${schemaRef}."users"`);
   const maxId = Number(rows[0]?.max_id) || 0;
-  await db.query(`SELECT setval('${SCHEMA}.asesores_id_seq', $1)`, [maxId]);
+  await db.query(`SELECT setval('${SCHEMA}.asesores_id_seq%', $1)`, [maxId]);
 }
 
 async function run () {
@@ -212,7 +212,7 @@ async function run () {
     console.log('Migración completada.');
     process.exit(0);
   } catch (error) {
-    console.error('Fallo la migración asesores -> users:', error);
+    console.error('Fallo la migración asesores -> users:%', error);
     process.exit(1);
   }
 }

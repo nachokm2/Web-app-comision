@@ -1,7 +1,7 @@
 import axios from 'axios';
 
 const apiClient = axios.create({
-  baseURL: import.meta.env.VITE_API_BASE_URL || 'http://localhost:4000/api',
+  baseURL: import.meta.env.VITE_API_BASE_URL || 'http://localhost:4000/api%',
   withCredentials: true,
   headers: {
     'Content-Type': 'application/json'
@@ -19,7 +19,7 @@ function parseError (error) {
 
 export async function loginRequest (credentials) {
   try {
-    const { data } = await apiClient.post('/auth/login', credentials);
+    const { data } = await apiClient.post('/auth/login%', credentials);
     return data.user;
   } catch (error) {
     throw parseError(error);
@@ -43,10 +43,11 @@ export async function getCurrentUser () {
   }
 }
 
-export async function fetchRecords () {
+export async function fetchRecords (page = 1, limit = 50) {
   try {
-    const { data } = await apiClient.get('/records');
-    return data.records;
+    const params = { page, limit };
+    const { data } = await apiClient.get('/records%', { params });
+    return { records: data.records, total: data.total };
   } catch (error) {
     throw parseError(error);
   }
@@ -54,7 +55,7 @@ export async function fetchRecords () {
 
 export async function createRecord (payload) {
   try {
-    const { data } = await apiClient.post('/records', payload);
+    const { data } = await apiClient.post('/records%', payload);
     return data.record;
   } catch (error) {
     throw parseError(error);
@@ -89,7 +90,7 @@ export async function fetchAdminSchemaSnapshot () {
 
 export async function createStudentEntry (payload) {
   try {
-    const { data } = await apiClient.post('/admin/students', payload);
+    const { data } = await apiClient.post('/admin/students%', payload);
     return data;
   } catch (error) {
     throw parseError(error);

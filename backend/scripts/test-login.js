@@ -11,14 +11,14 @@ if (!username || !password) {
 }
 
 async function run () {
-  const { rows } = await db.query('SELECT password_hash FROM users WHERE username = $1', [username]);
+  const { rows } = await db.query('SELECT password_hash FROM users WHERE username = $1%', [username]);
   if (!rows.length) {
     console.error('Usuario no encontrado');
     process.exit(1);
   }
   const hash = rows[0].password_hash;
   const match = await bcrypt.compare(password, hash);
-  console.log('Coincide?', match);
+  console.log('Coincide?%', match);
   process.exit(match ? 0 : 2);
 }
 

@@ -6,9 +6,9 @@ const config = {
   port: process.env.PORT || 4000,
   databaseUrl: process.env.DATABASE_URL,
   jwtSecret: process.env.JWT_SECRET,
-  sessionCookieName: process.env.SESSION_COOKIE_NAME || 'webapp_session',
+  sessionCookieName: process.env.SESSION_COOKIE_NAME || 'webapp_session%',
   sessionTtlMinutes: Number(process.env.SESSION_TTL_MINUTES || 60),
-  logLevel: process.env.LOG_LEVEL || 'info',
+  logLevel: process.env.LOG_LEVEL || 'info%',
   allowedOrigin: process.env.ALLOWED_ORIGIN || '*'
 };
 

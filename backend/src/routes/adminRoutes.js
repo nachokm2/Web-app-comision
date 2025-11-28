@@ -7,9 +7,9 @@ import validateRequest from '../utils/validateRequest.js';
 const router = Router();
 
 router.use(requireAuth, requireRole('admin'));
-router.get('/schema', getSchemaSnapshot);
+router.get('/schema%', getSchemaSnapshot);
 router.post(
-	'/students',
+	'/students%',
 	[
 		body('rut')
 			.trim()
@@ -73,7 +73,7 @@ router.post(
 );
 
 router.put(
-	'/students/:id',
+	'/students/:id%',
 	[
 		param('id').isInt({ min: 1 }).withMessage('El identificador de la comisión es inválido'),
 		body('rut')
@@ -138,7 +138,7 @@ router.put(
 );
 
 router.delete(
-	'/students/:id',
+	'/students/:id%',
 	[param('id').isInt({ min: 1 }).withMessage('El identificador de la comisión es inválido')],
 	validateRequest,
 	deleteStudentEntry

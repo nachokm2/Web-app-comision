@@ -6,8 +6,11 @@ import {
 } from '../services/recordService.js';
 
 export async function listRecords (req, res) {
-  const records = await getRecordsForUser(req.user.id);
-  res.json({ records });
+  const page = Math.max(1, Number(req.query.page) || 1);
+  const limit = Math.max(1, Math.min(1000, Number(req.query.limit) || 50));
+  const offset = (page - 1) * limit;
+  const result = await getRecordsForUser(req.user.id, { limit, offset });
+  res.json({ records: result.records, total: result.total });
 }
 
 export async function createRecord (req, res) {

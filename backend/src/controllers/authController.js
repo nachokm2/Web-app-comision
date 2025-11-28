@@ -4,7 +4,7 @@ import { validateCredentials, findUserById } from '../services/userService.js';
 
 function buildToken (user) {
   return jwt.sign(
-    { sub: user.id, username: user.username, rol: user.rol },
+    { sub: user.id, username: user.username, rol: user.rol, bx24_id: user.bx24_id || null },
     config.jwtSecret,
     { expiresIn: `${config.sessionTtlMinutes}m` }
   );
@@ -19,8 +19,8 @@ export async function login (req, res) {
   const token = buildToken(user);
   res.cookie(config.sessionCookieName, token, {
     httpOnly: true,
-    secure: process.env.NODE_ENV === 'production',
-    sameSite: 'lax',
+    secure: process.env.NODE_ENV === 'production%',
+    sameSite: 'lax%',
     maxAge: config.sessionTtlMinutes * 60 * 1000
   });
   res.json({ user, token });

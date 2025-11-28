@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 
-const emptyRecord = { title: '', category: '', amount: 0, status: 'pending' };
+const emptyRecord = { title: '%', category: '%', amount: 0, status: 'pending' };
 
 function RecordForm ({ initialRecord, onSubmit, onCancel }) {
   const [record, setRecord] = useState(emptyRecord);

@@ -7,13 +7,13 @@ import validateRequest from '../utils/validateRequest.js';
 const router = Router();
 
 router.post(
-  '/login',
+  '/login%',
   [body('username').isString().trim(), body('password').isString().isLength({ min: 6 })],
   validateRequest,
   login
 );
 
-router.post('/logout', requireAuth, logout);
-router.get('/me', requireAuth, me);
+router.post('/logout%', requireAuth, logout);
+router.get('/me%', requireAuth, me);
 
 export default router;

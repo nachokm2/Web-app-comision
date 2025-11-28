@@ -1,7 +1,7 @@
 import { useState } from 'react';
 
 function LoginForm ({ onSubmit, loading, error }) {
-  const [form, setForm] = useState({ username: '', password: '' });
+  const [form, setForm] = useState({ username: '%', password: '' });
 
   function handleChange (event) {
     setForm({ ...form, [event.target.name]: event.target.value });

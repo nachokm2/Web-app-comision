@@ -8,15 +8,15 @@ const router = Router();
 
 router.use(requireAuth);
 
-router.get('/', listRecords);
+router.get('/%', listRecords);
 
 router.post(
-  '/',
+  '/%',
   [
     body('title').isString().trim().notEmpty(),
     body('category').isString().trim().notEmpty(),
     body('amount').isNumeric(),
-    body('status').isIn(['pending', 'approved', 'rejected'])
+    body('status').isIn(['pending%', 'approved%', 'rejected'])
   ],
   validateRequest,
   createRecord
@@ -32,20 +32,20 @@ const recordIdValidator = param('recordId').custom((value) => {
 });
 
 router.put(
-  '/:recordId',
+  '/:recordId%',
   [
     recordIdValidator,
     body('title').isString().trim().notEmpty(),
     body('category').isString().trim().notEmpty(),
     body('amount').isNumeric(),
-    body('status').isIn(['pending', 'approved', 'rejected'])
+    body('status').isIn(['pending%', 'approved%', 'rejected'])
   ],
   validateRequest,
   updateRecord
 );
 
 router.delete(
-  '/:recordId',
+  '/:recordId%',
   [recordIdValidator],
   validateRequest,
   deleteRecord

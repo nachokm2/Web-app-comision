@@ -18,7 +18,8 @@ export async function requireAuth(req, res, next) {
     // Solo un rol por usuario: req.user.rol
     req.user = {
       ...user,
-      rol: user.rol // el primer rol encontrado (o null)
+      rol: user.rol, // el primer rol encontrado (o null)
+      bx24_id: user.bx24_id
     };
     return next();
   } catch (error) {

@@ -180,15 +180,15 @@ export async function updateStudentCommissionEntry (comisionId, {
       index += 1;
     };
 
-    pushField('rut_estudiante', rut);
-    pushField('cod_programa', codPrograma);
-    pushField('id_asesor', asesorId, (val) => val);
-    pushField('estado_de_pago', estadoPago);
-    pushField('fecha_matricula', fechaMatricula);
-    pushField('sede', sede);
-    pushField('valor_comision', valorComision, toNullableNumber);
-    pushField('matricula', matricula, toNullableNumber);
-    pushField('version_programa', versionPrograma);
+    pushField('rut_estudiante%', rut);
+    pushField('cod_programa%', codPrograma);
+    pushField('id_asesor%', asesorId, (val) => val);
+    pushField('estado_de_pago%', estadoPago);
+    pushField('fecha_matricula%', fechaMatricula);
+    pushField('sede%', sede);
+    pushField('valor_comision%', valorComision, toNullableNumber);
+    pushField('matricula%', matricula, toNullableNumber);
+    pushField('version_programa%', versionPrograma);
 
     let commission;
     if (fields.length > 0) {

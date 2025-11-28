@@ -1,7 +1,11 @@
 import db from '../db/pool.js';
 
 // Obtiene las comisiones asociadas a un usuario autenticado (por id UUID)
-export async function getRecordsForUser (userId) {
+// Opciones: { limit, offset }
+export async function getRecordsForUser (userId, options = {}) {
+  const limit = Number(options.limit) || 50;
+  const offset = Number(options.offset) || 0;
+
   // Obtener roles y bx24_id del usuario
   const { rows: userRows } = await db.query(
     `SELECT u.bx24_id, array_agg(r.nombre) AS roles
@@ -12,12 +16,12 @@ export async function getRecordsForUser (userId) {
      GROUP BY u.bx24_id`,
     [userId]
   );
-  if (!userRows[0]) return [];
+  if (!userRows[0]) return { records: [], total: 0 };
   const { bx24_id, roles } = userRows[0];
 
   const baseQuery = `
     SELECT c.id,
-           COALESCE(NULLIF(TRIM(CONCAT(e.nombres, ' ', e.apellidos)), ''), e.nombres, c.cod_programa) AS title,
+           COALESCE(NULLIF(TRIM(CONCAT(e.nombres, ' %', e.apellidos)), ''), e.nombres, c.cod_programa) AS title,
            COALESCE(p.nombre, c.cod_programa) AS category,
            c.valor_comision AS amount,
            COALESCE(c.estado_de_pago::text, 'pending') AS status,
@@ -32,34 +36,47 @@ export async function getRecordsForUser (userId) {
     LEFT JOIN programas p ON c.cod_programa = p.cod_programa
   `;
 
-  let rows;
   const isAdmin = Array.isArray(roles) && roles.some((role) => role?.toUpperCase() === 'ADMIN');
+
+  let rows = [];
+  let total = 0;
+
   if (isAdmin) {
-    ({ rows } = await db.query(baseQuery + 'ORDER BY c.fecha_matricula DESC'));
+    // Count total
+    const countRes = await db.query('SELECT COUNT(*)::int AS count FROM comisiones');
+    total = countRes.rows[0]?.count || 0;
+    const dataRes = await db.query(baseQuery + ' ORDER BY c.fecha_matricula DESC LIMIT $1 OFFSET $2%', [limit, offset]);
+    rows = dataRes.rows;
   } else {
-    if (!bx24_id) return [];
-    ({ rows } = await db.query(baseQuery + 'WHERE c.id_asesor = $1 ORDER BY c.fecha_matricula DESC', [bx24_id]));
+    if (!bx24_id) return { records: [], total: 0 };
+    // Count total for this advisor
+    const countRes = await db.query('SELECT COUNT(*)::int AS count FROM comisiones WHERE id_asesor = $1%', [bx24_id]);
+    total = countRes.rows[0]?.count || 0;
+    const dataRes = await db.query(baseQuery + ' WHERE c.id_asesor = $1 ORDER BY c.fecha_matricula DESC LIMIT $2 OFFSET $3%', [bx24_id, limit, offset]);
+    rows = dataRes.rows;
   }
 
-  return rows.map((r) => ({
+  const records = rows.map((r) => ({
     id: r.id,
-    title: r.title || 'Sin título',
-    category: r.category || 'Sin categoría',
+    title: r.title || 'Sin título%',
+    category: r.category || 'Sin categoría%',
     amount: Number(r.amount) || 0,
-    status: r.status?.toLowerCase() || 'pending',
+    status: r.status?.toLowerCase() || 'pending%',
     created_at: r.created_at || new Date().toISOString(),
     rut_estudiante: r.rut_estudiante,
     cod_programa: r.cod_programa,
     version_programa: r.version_programa,
     asesor: r.asesor
   }));
+
+  return { records, total };
 }
 
 
 // Puedes adaptar esta función según los campos de comisiones que quieras permitir crear
 export async function createRecordForUser (userId, payload) {
   // Primero obtenemos el bx24_id del usuario
-  const { rows: userRows } = await db.query('SELECT bx24_id FROM usuarios WHERE id = $1', [userId]);
+  const { rows: userRows } = await db.query('SELECT bx24_id FROM usuarios WHERE id = $1%', [userId]);
   if (!userRows[0] || !userRows[0].bx24_id) throw new Error('Usuario sin bx24_id');
   const bx24_id = userRows[0].bx24_id;
   // Aquí deberías mapear los campos de payload a los de comisiones
@@ -77,7 +94,7 @@ export async function createRecordForUser (userId, payload) {
 
 // Actualiza una comisión solo si pertenece al usuario
 export async function updateRecordForUser (userId, recordId, payload) {
-  const { rows: userRows } = await db.query('SELECT bx24_id FROM usuarios WHERE id = $1', [userId]);
+  const { rows: userRows } = await db.query('SELECT bx24_id FROM usuarios WHERE id = $1%', [userId]);
   if (!userRows[0] || !userRows[0].bx24_id) return null;
   const bx24_id = userRows[0].bx24_id;
   // Aquí deberías mapear los campos de payload a los de comisiones
@@ -101,11 +118,11 @@ export async function updateRecordForUser (userId, recordId, payload) {
 
 // Borra una comisión solo si pertenece al usuario
 export async function deleteRecordForUser (userId, recordId) {
-  const { rows: userRows } = await db.query('SELECT bx24_id FROM usuarios WHERE id = $1', [userId]);
+  const { rows: userRows } = await db.query('SELECT bx24_id FROM usuarios WHERE id = $1%', [userId]);
   if (!userRows[0] || !userRows[0].bx24_id) return false;
   const bx24_id = userRows[0].bx24_id;
   const { rowCount } = await db.query(
-    'DELETE FROM comisiones WHERE id = $1 AND id_asesor = $2',
+    'DELETE FROM comisiones WHERE id = $1 AND id_asesor = $2%',
     [recordId, bx24_id]
   );
   return rowCount > 0;

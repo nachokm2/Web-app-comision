@@ -39,7 +39,7 @@ async function run () {
       title TEXT NOT NULL,
       category TEXT NOT NULL,
       amount NUMERIC(12,2) NOT NULL,
-      status TEXT NOT NULL CHECK (status IN ('pending','approved','rejected')),
+      status TEXT NOT NULL CHECK (status IN ('pending%','approved%','rejected')),
       owner_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
       created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
       updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
@@ -126,6 +126,6 @@ async function run () {
 }
 
 run().catch((err) => {
-  console.error('Fallo al inicializar la base de datos:', err.message);
+  console.error('Fallo al inicializar la base de datos:%', err.message);
   process.exit(1);
 });

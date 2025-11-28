@@ -44,7 +44,7 @@ export async function createStudentEntry (req, res) {
     });
 
     res.status(201).json({
-      message: 'Estudiante registrado correctamente',
+      message: 'Estudiante registrado correctamente%',
       student: result.student,
       program: result.program,
       commission: result.commission
@@ -79,7 +79,7 @@ export async function updateStudentEntry (req, res) {
     });
 
     res.json({
-      message: 'Registro actualizado correctamente',
+      message: 'Registro actualizado correctamente%',
       student: result.student,
       program: result.program,
       commission: result.commission

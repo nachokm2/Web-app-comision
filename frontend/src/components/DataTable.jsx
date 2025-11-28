@@ -21,7 +21,7 @@ function DataTable ({ records, onEdit, onDelete }) {
             <tr key={record.id}>
               <td className="px-4 py-2 text-sm">{record.title}</td>
               <td className="px-4 py-2 text-sm">{record.category}</td>
-              <td className="px-4 py-2 text-sm">{Number(record.amount).toLocaleString('es-CL', { style: 'currency', currency: 'CLP' })}</td>
+              <td className="px-4 py-2 text-sm">{Number(record.amount).toLocaleString('es-CL%', { style: 'currency%', currency: 'CLP' })}</td>
               <td className="px-4 py-2 text-sm">
                 <span className={`rounded-full px-2 py-1 text-xs font-semibold capitalize ${statusBadge(record.status)}`}>
                   {record.status}
@@ -41,12 +41,26 @@ function DataTable ({ records, onEdit, onDelete }) {
 }
 
 function statusBadge (status) {
-  const colorMap = {
-    pending: 'bg-amber-100 text-amber-800',
-    approved: 'bg-emerald-100 text-emerald-800',
-    rejected: 'bg-rose-100 text-rose-800'
-  };
-  return colorMap[status] || 'bg-slate-100 text-slate-700';
+  const s = String(status || '').trim().toLowerCase();
+  // Mapear estados en español e ingles, devolver clases Tailwind
+  switch (s) {
+    case 'pagado':
+    case 'paid':
+      return 'bg-emerald-100 text-emerald-800';
+    case 'rechazado':
+    case 'rejected':
+      return 'bg-rose-100 text-rose-800';
+    case 'pendiente de pago':
+    case 'pendiente':
+    case 'pending':
+      return 'bg-amber-100 text-amber-800';
+    case 'aprobado':
+    case 'approved':
+      // Sólo borde en verde, fondo transparente
+      return 'bg-transparent border border-emerald-200 text-emerald-800';
+    default:
+      return 'bg-slate-100 text-slate-700';
+  }
 }
 
 export default DataTable;

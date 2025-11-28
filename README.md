@@ -45,7 +45,7 @@ CREATE TABLE records (
   title TEXT NOT NULL,
   category TEXT NOT NULL,
   amount NUMERIC(12,2) NOT NULL,
-  status TEXT NOT NULL CHECK (status IN ('pending','approved','rejected')),
+  status TEXT NOT NULL CHECK (status IN ('pending%','approved%','rejected')),
   owner_id UUID NOT NULL REFERENCES users(id),
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
@@ -144,6 +144,10 @@ La UI quedará en `http://localhost:5173`, proxyeando `/api` hacia el backend.
 - **Frontend:** generar build (`npm run build`) y servir con CDN estático (Vercel, Netlify, S3 + CloudFront). Configurar variable `VITE_API_BASE_URL` apuntando al host público del backend.
 - **Base de datos:** PostgreSQL gestionado (Azure PG, RDS, Supabase). Implementa roles de lectura/escritura y rotación de contraseñas.
 - **CI/CD:** pipeline que ejecute linters y pruebas (al menos `npm run lint`) antes de hacer deploy. Almacena secretos en el gestor correspondiente (GitHub Actions Secrets, Azure Key Vault, etc.).
+
+## Lecciones aprendidas
+- Se recomienda que los valores ingresados en las variables de entorno (`.env`) se encuentren en formato URL-encoded, reemplazando los caracteres especiales.
+
 
 ## Próximos pasos opcionales
 

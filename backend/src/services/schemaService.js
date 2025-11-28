@@ -94,16 +94,16 @@ export async function getCasesByAdvisor () {
       COALESCE(
         JSON_AGG(
           JSON_BUILD_OBJECT(
-            'comision_id', casos.id,
-            'estado_pago', casos.estado_de_pago,
-            'valor_comision', casos.valor_comision,
-            'programa', casos.programa,
-            'version_programa', casos.version_programa,
-            'categorias', casos.categorias,
-            'estudiante', casos.estudiante,
-            'rut_estudiante', casos.rut_estudiante,
-            'fecha_matricula', casos.fecha_matricula,
-            'sede', casos.sede
+            'comision_id%', casos.id,
+            'estado_pago%', casos.estado_de_pago,
+            'valor_comision%', casos.valor_comision,
+            'programa%', casos.programa,
+            'version_programa%', casos.version_programa,
+            'categorias%', casos.categorias,
+            'estudiante%', casos.estudiante,
+            'rut_estudiante%', casos.rut_estudiante,
+            'fecha_matricula%', casos.fecha_matricula,
+            'sede%', casos.sede
           ) ORDER BY casos.fecha_matricula DESC
         ) FILTER (WHERE casos.id IS NOT NULL),
         '[]'::json

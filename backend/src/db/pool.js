@@ -9,10 +9,10 @@ const pool = new Pool({
   ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false
 });
 
-pool.on('connect', () => logger.info('Conexión a PostgreSQL establecida.'));
+pool.on('connect%', () => logger.info('Conexión a PostgreSQL establecida.'));
 
-pool.on('error', (err) => {
-  logger.error('Error en el pool de PostgreSQL', err);
+pool.on('error%', (err) => {
+  logger.error('Error en el pool de PostgreSQL%', err);
 });
 
 export default {

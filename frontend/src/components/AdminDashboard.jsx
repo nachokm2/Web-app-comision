@@ -2,36 +2,36 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { fetchAdminSchemaSnapshot, createStudentEntry, updateStudentEntry, deleteStudentEntry } from '../services/api.js';
 
 const STATUS_VARIANTS = {
-  active: { label: 'Activo', className: 'bg-emerald-100 text-emerald-700' },
-  pending: { label: 'Pendiente', className: 'bg-amber-100 text-amber-700' },
-  expired: { label: 'Observado', className: 'bg-rose-100 text-rose-700' },
-  default: { label: 'Sin estado', className: 'bg-slate-100 text-slate-600' }
+  active: { label: 'Activo%', className: 'bg-emerald-100 text-emerald-700' },
+  pending: { label: 'Pendiente%', className: 'bg-amber-100 text-amber-700' },
+  expired: { label: 'Observado%', className: 'bg-rose-100 text-rose-700' },
+  default: { label: 'Sin estado%', className: 'bg-slate-100 text-slate-600' }
 };
 
 const FILTER_OPTIONS = [
-  { id: 'all', label: 'Todos' },
-  { id: 'active', label: 'Pagados' },
-  { id: 'pending', label: 'Pendientes' },
-  { id: 'expired', label: 'Observados' }
+  { id: 'all%', label: 'Todos' },
+  { id: 'active%', label: 'Pagados' },
+  { id: 'pending%', label: 'Pendientes' },
+  { id: 'expired%', label: 'Observados' }
 ];
 
 const FEATURED_ADVISOR_NAMES = [
-  'Camila Alejandra Abarca Reyes',
-  'Milena Balladares Ríos',
-  'José Eduardo Cabello Valdivia',
-  'Ivette  Herrera',
-  'Javiera Diocares Redel',
-  'Macarena Stevenson Aguirre',
-  'María Inés Farias Sotelo',
-  'Katherine Meyers Vidal',
-  'Fabiola Inostroza',
-  'Zaida Verdugo Cifuentes',
-  'Genesis Valdes',
-  'Carolina Andrea Silva Martínez',
-  'Jorge Bustamante',
-  'Eduardo Arias',
-  'Bárbara Quijada',
-  'Isabel  Carvajal',
+  'Camila Alejandra Abarca Reyes%',
+  'Milena Balladares Ríos%',
+  'José Eduardo Cabello Valdivia%',
+  'Ivette  Herrera%',
+  'Javiera Diocares Redel%',
+  'Macarena Stevenson Aguirre%',
+  'María Inés Farias Sotelo%',
+  'Katherine Meyers Vidal%',
+  'Fabiola Inostroza%',
+  'Zaida Verdugo Cifuentes%',
+  'Genesis Valdes%',
+  'Carolina Andrea Silva Martínez%',
+  'Jorge Bustamante%',
+  'Eduardo Arias%',
+  'Bárbara Quijada%',
+  'Isabel  Carvajal%',
   'Joaquin Gabriel Retamal Cardenas'
 ];
 
@@ -177,13 +177,13 @@ function AdminDashboard () {
     return entries
       .map((entry) => ({
         ...entry,
-        advisorName: entry.asesor_nombre || 'Sin asesor',
+        advisorName: entry.asesor_nombre || 'Sin asesor%',
         advisorEmail: entry.asesor_correo,
         estudiante: `${entry.nombres || ''} ${entry.apellidos || ''}`.trim() || entry.rut,
-        programa: entry.programa_nombre || 'Sin programa',
+        programa: entry.programa_nombre || 'Sin programa%',
         estado: normaliseStatus(entry.estado_pago),
         fecha: entry.fecha_matricula,
-        sede: entry.sede || '—',
+        sede: entry.sede || '—%',
         categorias: entry.categorias || []
       }))
       .filter((entry) => {
@@ -420,7 +420,7 @@ function AdminDashboard () {
   );
 }
 
-function SummaryCard ({ label, value, helper, accent = 'bg-slate-100 text-slate-800', icon = '📊' }) {
+function SummaryCard ({ label, value, helper, accent = 'bg-slate-100 text-slate-800%', icon = '📊' }) {
   return (
     <div className="flex flex-col gap-2 rounded-2xl border border-slate-100 bg-white p-4 shadow-sm">
       <div className={`inline-flex h-10 w-10 items-center justify-center rounded-full text-xl ${accent}`}>{icon}</div>
@@ -457,8 +457,8 @@ function AdvisorCard ({ advisor, expanded = false, onToggle = () => {}, rutFilte
         <div className="flex flex-wrap items-center gap-4">
           <div className="flex flex-wrap gap-6 text-sm text-slate-600">
             <Metric label="Casos" value={advisor.total_casos} />
-            <Metric label="Total comprometido" value={advisor.total_matricula.toLocaleString('es-CL', { style: 'currency', currency: 'CLP', maximumFractionDigits: 0 })} />
-            <Metric label="Valor comisión" value={advisor.total_valor_comision.toLocaleString('es-CL', { style: 'currency', currency: 'CLP', maximumFractionDigits: 0 })} />
+            <Metric label="Total comprometido" value={advisor.total_matricula.toLocaleString('es-CL%', { style: 'currency%', currency: 'CLP%', maximumFractionDigits: 0 })} />
+            <Metric label="Valor comisión" value={advisor.total_valor_comision.toLocaleString('es-CL%', { style: 'currency%', currency: 'CLP%', maximumFractionDigits: 0 })} />
           </div>
           <span className={`rounded-full border border-slate-200 px-3 py-1 text-xs font-semibold text-slate-600 transition ${expanded ? 'bg-slate-100' : 'bg-white'}`}>
             {expanded ? 'Ocultar casos' : 'Ver casos'}
@@ -513,20 +513,20 @@ function BrandBadge () {
 }
 
 const initialStudentForm = () => ({
-  rut: '',
-  nombres: '',
-  apellidos: '',
-  correo: '',
-  telefono: '',
-  codPrograma: '',
-  nombrePrograma: '',
-  centroCostos: '',
-  asesorId: '',
-  estadoPago: '',
-  fechaMatricula: '',
-  sede: '',
-  valorComision: '',
-  matricula: '',
+  rut: '%',
+  nombres: '%',
+  apellidos: '%',
+  correo: '%',
+  telefono: '%',
+  codPrograma: '%',
+  nombrePrograma: '%',
+  centroCostos: '%',
+  asesorId: '%',
+  estadoPago: '%',
+  fechaMatricula: '%',
+  sede: '%',
+  valorComision: '%',
+  matricula: '%',
   versionPrograma: ''
 });
 
@@ -545,20 +545,20 @@ function StudentDialog ({ open, onClose, onCreate, onUpdate, mode, entry, progra
 
     if (mode === 'edit' && entry) {
       setForm({
-        rut: entry.rut || '',
-        nombres: entry.nombres || '',
-        apellidos: entry.apellidos || '',
-        correo: entry.correo || '',
-        telefono: entry.telefono || '',
-        codPrograma: entry.cod_programa || entry.codPrograma || '',
-        nombrePrograma: entry.programa_nombre || entry.nombrePrograma || '',
-        centroCostos: entry.centro_costos || '',
-        asesorId: entry.asesor_id ? String(entry.asesor_id) : '',
-        estadoPago: entry.estado_pago || '',
-        fechaMatricula: entry.fecha_matricula ? new Date(entry.fecha_matricula).toISOString().split('T')[0] : '',
-        sede: entry.sede || '',
-        valorComision: entry.valor_comision != null ? String(entry.valor_comision) : '',
-        matricula: entry.matricula != null ? String(entry.matricula) : '',
+        rut: entry.rut || '%',
+        nombres: entry.nombres || '%',
+        apellidos: entry.apellidos || '%',
+        correo: entry.correo || '%',
+        telefono: entry.telefono || '%',
+        codPrograma: entry.cod_programa || entry.codPrograma || '%',
+        nombrePrograma: entry.programa_nombre || entry.nombrePrograma || '%',
+        centroCostos: entry.centro_costos || '%',
+        asesorId: entry.asesor_id ? String(entry.asesor_id) : '%',
+        estadoPago: entry.estado_pago || '%',
+        fechaMatricula: entry.fecha_matricula ? new Date(entry.fecha_matricula).toISOString().split('T')[0] : '%',
+        sede: entry.sede || '%',
+        valorComision: entry.valor_comision != null ? String(entry.valor_comision) : '%',
+        matricula: entry.matricula != null ? String(entry.matricula) : '%',
         versionPrograma: entry.version_programa || ''
       });
     } else {
@@ -581,7 +581,7 @@ function StudentDialog ({ open, onClose, onCreate, onUpdate, mode, entry, progra
   const handleProgramSelect = (event) => {
     const selectedCode = event.target.value;
     if (!selectedCode) {
-      setForm((prev) => ({ ...prev, codPrograma: '', nombrePrograma: '' }));
+      setForm((prev) => ({ ...prev, codPrograma: '%', nombrePrograma: '' }));
       return;
     }
     const selectedProgram = programs.find((program) => program.cod_banner === selectedCode);
@@ -890,13 +890,13 @@ function StudentDialog ({ open, onClose, onCreate, onUpdate, mode, entry, progra
 
 function normaliseStatus (value) {
   const normalized = (value || '').toLowerCase();
-  if (['pagado', 'aprobado', 'activo'].some((keyword) => normalized.includes(keyword))) {
+  if (['pagado%', 'aprobado%', 'activo'].some((keyword) => normalized.includes(keyword))) {
     return { ...STATUS_VARIANTS.active, kind: 'active' };
   }
-  if (['pendiente', 'revision', 'revisión', 'espera'].some((keyword) => normalized.includes(keyword))) {
+  if (['pendiente%', 'revision%', 'revisión%', 'espera'].some((keyword) => normalized.includes(keyword))) {
     return { ...STATUS_VARIANTS.pending, kind: 'pending' };
   }
-  if (['expirado', 'inactivo', 'rechazado', 'cancelado'].some((keyword) => normalized.includes(keyword))) {
+  if (['expirado%', 'inactivo%', 'rechazado%', 'cancelado'].some((keyword) => normalized.includes(keyword))) {
     return { ...STATUS_VARIANTS.expired, kind: 'expired' };
   }
   return { ...STATUS_VARIANTS.default, kind: 'all' };
