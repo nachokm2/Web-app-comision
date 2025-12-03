@@ -17,10 +17,11 @@ export async function login (req, res) {
     return res.status(401).json({ message: 'Credenciales inválidas' });
   }
   const token = buildToken(user);
+  const isProduction = process.env.NODE_ENV === 'production';
   res.cookie(config.sessionCookieName, token, {
     httpOnly: true,
-    secure: process.env.NODE_ENV === 'production',
-    sameSite: 'lax',
+    secure: isProduction,
+    sameSite: isProduction ? 'none' : 'lax',  // 'none' para cross-site en producción
     maxAge: config.sessionTtlMinutes * 60 * 1000
   });
   res.json({ user, token });
