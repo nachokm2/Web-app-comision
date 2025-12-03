@@ -6,7 +6,7 @@ const { Pool } = pkg;
 
 const pool = new Pool({
   connectionString: config.databaseUrl,
-  ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false
+  ssl: false  // SiteGround PostgreSQL no soporta SSL
 });
 
 pool.on('connect', () => logger.info('Conexión a PostgreSQL establecida.'));
