@@ -32,7 +32,11 @@ export function requireRole(...roles) {
     if (!req.user) {
       return res.status(401).json({ message: 'No autenticado' });
     }
-    if (!roles.includes(req.user.rol)) {
+    // Comparación case-insensitive
+    const userRol = (req.user.rol || '').toUpperCase();
+    const allowedRoles = roles.map(r => r.toUpperCase());
+    console.log('[requireRole] Usuario:', req.user.username, 'Rol:', req.user.rol, 'Permitidos:', roles);
+    if (!allowedRoles.includes(userRol)) {
       return res.status(403).json({ message: 'No autorizado' });
     }
     return next();

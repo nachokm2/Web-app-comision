@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
-import { fetchAdminSchemaSnapshot, createStudentEntry, updateStudentEntry, deleteStudentEntry } from '../services/api.js';
+﻿import { useCallback, useEffect, useMemo, useState } from 'react';
+import { fetchAdminSchemaSnapshot, fetchAdminComisiones, createStudentEntry, updateStudentEntry, deleteStudentEntry } from '../services/api.js';
 
 const STATUS_VARIANTS = {
   active: { label: 'Activo', className: 'bg-emerald-100 text-emerald-700' },
@@ -57,6 +57,7 @@ function isFeaturedAdvisor (name) {
 
 function AdminDashboard () {
   const [snapshot, setSnapshot] = useState(null);
+  const [comisiones, setComisiones] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [filter, setFilter] = useState('all');
@@ -68,6 +69,13 @@ function AdminDashboard () {
   const [deletingId, setDeletingId] = useState(null);
   const [rutSearch, setRutSearch] = useState('');
   const [expandedAdvisors, setExpandedAdvisors] = useState(() => new Set());
+  const [currentPage, setCurrentPage] = useState(1);
+  const pageSize = 50;
+  
+  // Filtros para la tabla de comisiones
+  const [filterRut, setFilterRut] = useState('');
+  const [filterAsesor, setFilterAsesor] = useState('');
+  const [filterPrograma, setFilterPrograma] = useState('');
 
   const loadSnapshot = useCallback(async () => {
     try {
@@ -75,6 +83,8 @@ function AdminDashboard () {
       setError(null);
       const data = await fetchAdminSchemaSnapshot();
       setSnapshot(data);
+      const all = await fetchAdminComisiones();
+      setComisiones(all);
     } catch (err) {
       setError(err.message);
     } finally {
@@ -156,13 +166,21 @@ function AdminDashboard () {
   }, [snapshot]);
 
   const summary = useMemo(() => {
-    if (!snapshot) return null;
-    const studentEntries = featuredEntries;
+    // Usar comisiones para los conteos del dashboard
+    const totalEntradas = comisiones.length;
+    const totalActivos = comisiones.filter((c) => {
+      const status = (c.status || '').toLowerCase();
+      return ['pagado', 'aprobado', 'activo'].some(k => status.includes(k));
+    }).length;
+    const totalPendientes = comisiones.filter((c) => {
+      const status = (c.status || '').toLowerCase();
+      return ['pendiente', 'revision', 'revisión', 'espera'].some(k => status.includes(k));
+    }).length;
+    const totalExpirados = comisiones.filter((c) => {
+      const status = (c.status || '').toLowerCase();
+      return ['expirado', 'inactivo', 'rechazado', 'cancelado', 'observado'].some(k => status.includes(k));
+    }).length;
     const totalAsesores = featuredCases.length;
-    const totalEntradas = studentEntries.length;
-    const totalActivos = studentEntries.filter((entry) => normaliseStatus(entry.estado_pago).kind === 'active').length;
-    const totalPendientes = studentEntries.filter((entry) => normaliseStatus(entry.estado_pago).kind === 'pending').length;
-    const totalExpirados = studentEntries.filter((entry) => normaliseStatus(entry.estado_pago).kind === 'expired').length;
     return {
       totalAsesores,
       totalEntradas,
@@ -170,7 +188,85 @@ function AdminDashboard () {
       totalPendientes,
       totalExpirados
     };
-  }, [snapshot, featuredEntries, featuredCases]);
+  }, [comisiones, featuredCases]);
+
+  // Agrupar comisiones por asesor
+  const comisionesPorAsesor = useMemo(() => {
+    const grouped = {};
+    comisiones.forEach((c) => {
+      const asesorKey = c.asesor || 'Sin asesor';
+      if (!grouped[asesorKey]) {
+        grouped[asesorKey] = {
+          nombre: asesorKey,
+          casos: [],
+          totalMonto: 0,
+          pagados: 0,
+          pendientes: 0,
+          observados: 0
+        };
+      }
+      grouped[asesorKey].casos.push(c);
+      grouped[asesorKey].totalMonto += Number(c.amount) || 0;
+      
+      const status = (c.status || '').toLowerCase();
+      if (['pagado', 'aprobado', 'activo'].some(k => status.includes(k))) {
+        grouped[asesorKey].pagados++;
+      } else if (['pendiente', 'revision', 'revisión', 'espera'].some(k => status.includes(k))) {
+        grouped[asesorKey].pendientes++;
+      } else {
+        grouped[asesorKey].observados++;
+      }
+    });
+    
+    // Convertir a array y ordenar por total de casos
+    return Object.values(grouped).sort((a, b) => b.casos.length - a.casos.length);
+  }, [comisiones]);
+
+  // Filtrar asesores por búsqueda de RUT
+  const asesoresFiltrados = useMemo(() => {
+    const normalizedRut = normalizeRut(rutSearch);
+    if (!normalizedRut) {
+      return comisionesPorAsesor;
+    }
+    return comisionesPorAsesor.filter((asesor) =>
+      asesor.casos.some((caso) => normalizeRut(caso.rut_estudiante || '')?.includes(normalizedRut))
+    );
+  }, [comisionesPorAsesor, rutSearch]);
+
+  // Lista única de asesores para el filtro
+  const listaAsesores = useMemo(() => {
+    const asesores = [...new Set(comisiones.map((c) => c.asesor).filter(Boolean))];
+    return asesores.sort((a, b) => a.localeCompare(b, 'es'));
+  }, [comisiones]);
+
+  // Lista única de programas para el filtro
+  const listaProgramas = useMemo(() => {
+    const programas = [...new Set(comisiones.map((c) => c.category).filter(Boolean))];
+    return programas.sort((a, b) => a.localeCompare(b, 'es'));
+  }, [comisiones]);
+
+  // Comisiones filtradas por RUT, asesor y programa
+  const comisionesFiltradas = useMemo(() => {
+    let filtered = comisiones;
+    
+    // Filtro por RUT
+    if (filterRut.trim()) {
+      const rutNorm = normalizeRut(filterRut);
+      filtered = filtered.filter((c) => normalizeRut(c.rut_estudiante || '').includes(rutNorm));
+    }
+    
+    // Filtro por asesor
+    if (filterAsesor) {
+      filtered = filtered.filter((c) => c.asesor === filterAsesor);
+    }
+    
+    // Filtro por programa
+    if (filterPrograma) {
+      filtered = filtered.filter((c) => c.category === filterPrograma);
+    }
+    
+    return filtered;
+  }, [comisiones, filterRut, filterAsesor, filterPrograma]);
 
   const filteredEntries = useMemo(() => {
     const entries = featuredEntries;
@@ -240,164 +336,298 @@ function AdminDashboard () {
         </div>
       </section>
 
+      {/* Tabla de todas las comisiones */}
+      <section className="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-slate-100">
+        <h2 className="mb-4 text-xl font-semibold text-slate-900">
+          Todas las comisiones ({comisionesFiltradas.length})
+          {(filterRut || filterAsesor || filterPrograma) && (
+            <span className="ml-2 text-sm font-normal text-slate-500">
+              (filtrado de {comisiones.length} total)
+            </span>
+          )}
+        </h2>
+        
+        {/* Filtros */}
+        <div className="mb-4 grid gap-3 md:grid-cols-4">
+          <div className="relative">
+            <label className="mb-1 block text-xs font-medium text-slate-500">Filtrar por RUT</label>
+            <input
+              type="search"
+              value={filterRut}
+              onChange={(e) => { setFilterRut(e.target.value); setCurrentPage(1); }}
+              placeholder="Ej: 12345678-9"
+              className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-200"
+            />
+          </div>
+          <div className="relative">
+            <label className="mb-1 block text-xs font-medium text-slate-500">Filtrar por Asesor</label>
+            <select
+              value={filterAsesor}
+              onChange={(e) => { setFilterAsesor(e.target.value); setCurrentPage(1); }}
+              className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-200"
+            >
+              <option value="">Todos los asesores</option>
+              {listaAsesores.map((asesor) => (
+                <option key={asesor} value={asesor}>{asesor}</option>
+              ))}
+            </select>
+          </div>
+          <div className="relative">
+            <label className="mb-1 block text-xs font-medium text-slate-500">Filtrar por Programa</label>
+            <select
+              value={filterPrograma}
+              onChange={(e) => { setFilterPrograma(e.target.value); setCurrentPage(1); }}
+              className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-200"
+            >
+              <option value="">Todos los programas</option>
+              {listaProgramas.map((programa) => (
+                <option key={programa} value={programa}>{programa}</option>
+              ))}
+            </select>
+          </div>
+          <div className="flex items-end">
+            {(filterRut || filterAsesor || filterPrograma) && (
+              <button
+                type="button"
+                onClick={() => { setFilterRut(''); setFilterAsesor(''); setFilterPrograma(''); setCurrentPage(1); }}
+                className="w-full rounded-lg border border-slate-300 bg-slate-50 px-3 py-2 text-sm font-medium text-slate-600 transition hover:bg-slate-100"
+              >
+                Limpiar filtros
+              </button>
+            )}
+          </div>
+        </div>
+        
+        <div className="overflow-x-auto rounded border border-slate-200 bg-white">
+          <table className="min-w-full divide-y divide-slate-200">
+            <thead className="bg-slate-50">
+              <tr>
+                <th className="px-4 py-2 text-left text-xs font-semibold uppercase tracking-wider">RUT</th>
+                <th className="px-4 py-2 text-left text-xs font-semibold uppercase tracking-wider">Estudiante</th>
+                <th className="px-4 py-2 text-left text-xs font-semibold uppercase tracking-wider">Programa</th>
+                <th className="px-4 py-2 text-left text-xs font-semibold uppercase tracking-wider">Monto</th>
+                <th className="px-4 py-2 text-left text-xs font-semibold uppercase tracking-wider">Estado</th>
+                <th className="px-4 py-2 text-left text-xs font-semibold uppercase tracking-wider">Asesor</th>
+                <th className="px-4 py-2 text-left text-xs font-semibold uppercase tracking-wider">Fecha</th>
+                <th className="px-4 py-2 text-left text-xs font-semibold uppercase tracking-wider">Acciones</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100">
+              {comisionesFiltradas.slice((currentPage - 1) * pageSize, currentPage * pageSize).map((r) => (
+                <tr key={r.id} className="hover:bg-slate-50">
+                  <td className="px-4 py-2 text-sm font-mono text-slate-600">{r.rut_estudiante || '—'}</td>
+                  <td className="px-4 py-2 text-sm">{r.title}</td>
+                  <td className="px-4 py-2 text-sm">{r.category}</td>
+                  <td className="px-4 py-2 text-sm">{Number(r.amount).toLocaleString('es-CL', { style: 'currency', currency: 'CLP' })}</td>
+                  <td className="px-4 py-2 text-sm">
+                    <span className={`inline-block rounded-full px-2 py-0.5 text-xs font-semibold ${r.status?.toLowerCase() === 'pagado' ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'}`}>
+                      {r.status}
+                    </span>
+                  </td>
+                  <td className="px-4 py-2 text-sm text-slate-600">{r.asesor || '—'}</td>
+                  <td className="px-4 py-2 text-sm text-slate-500">{r.created_at ? new Date(r.created_at).toLocaleDateString('es-CL') : ''}</td>
+                  <td className="px-4 py-2 text-sm">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setEditingEntry({
+                          comision_id: r.id,
+                          rut: r.rut_estudiante,
+                          nombres: r.title?.split(' ').slice(0, -2).join(' ') || '',
+                          apellidos: r.title?.split(' ').slice(-2).join(' ') || '',
+                          cod_programa: r.cod_programa,
+                          programa_nombre: r.category,
+                          asesor_nombre: r.asesor,
+                          estado_pago: r.status,
+                          fecha_matricula: r.created_at,
+                          valor_comision: r.amount,
+                          version_programa: r.version_programa
+                        });
+                        setDialogMode('edit');
+                        setIsDialogOpen(true);
+                      }}
+                      className="rounded-full border border-indigo-200 px-3 py-1 text-xs font-semibold text-indigo-600 transition hover:bg-indigo-50"
+                    >
+                      Editar
+                    </button>
+                  </td>
+                </tr>
+              ))}
+              {!comisionesFiltradas.length && (
+                <tr>
+                  <td colSpan="8" className="px-4 py-6 text-center text-sm text-slate-500">
+                    {(filterRut || filterAsesor || filterPrograma) ? 'No se encontraron registros con los filtros aplicados' : 'Sin registros'}
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+        {/* Paginación */}
+        {comisionesFiltradas.length > pageSize && (
+          <div className="mt-4 flex items-center justify-between">
+            <p className="text-sm text-slate-500">
+              Mostrando {((currentPage - 1) * pageSize) + 1} - {Math.min(currentPage * pageSize, comisionesFiltradas.length)} de {comisionesFiltradas.length} registros
+            </p>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setCurrentPage(1)}
+                disabled={currentPage === 1}
+                className="rounded border border-slate-200 px-3 py-1 text-sm font-medium text-slate-600 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                ««
+              </button>
+              <button
+                type="button"
+                onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+                disabled={currentPage === 1}
+                className="rounded border border-slate-200 px-3 py-1 text-sm font-medium text-slate-600 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                « Anterior
+              </button>
+              <span className="px-3 py-1 text-sm font-semibold text-slate-700">
+                Página {currentPage} de {Math.ceil(comisionesFiltradas.length / pageSize)}
+              </span>
+              <button
+                type="button"
+                onClick={() => setCurrentPage((p) => Math.min(Math.ceil(comisionesFiltradas.length / pageSize), p + 1))}
+                disabled={currentPage >= Math.ceil(comisionesFiltradas.length / pageSize)}
+                className="rounded border border-slate-200 px-3 py-1 text-sm font-medium text-slate-600 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                Siguiente »
+              </button>
+              <button
+                type="button"
+                onClick={() => setCurrentPage(Math.ceil(comisionesFiltradas.length / pageSize))}
+                disabled={currentPage >= Math.ceil(comisionesFiltradas.length / pageSize)}
+                className="rounded border border-slate-200 px-3 py-1 text-sm font-medium text-slate-600 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                »»
+              </button>
+            </div>
+          </div>
+        )}
+      </section>
+
       <section className="space-y-5">
         <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
           <div>
-            <h2 className="text-xl font-semibold text-slate-900">Casos por asesor</h2>
+            <h2 className="text-xl font-semibold text-slate-900">Casos por asesor ({asesoresFiltrados.length})</h2>
             <p className="text-sm text-slate-500">Resumen detallado por responsable con métricas clave.</p>
           </div>
           <div className="flex w-full flex-col gap-2 md:w-auto md:items-end">
-            <span className="text-sm text-slate-500">Ordenados descendentemente por total de casos</span>
+            <span className="text-sm text-slate-500">Ordenados por total de casos</span>
             <div className="relative w-full md:w-64">
               <input
                 type="search"
                 value={rutSearch}
                 onChange={(event) => setRutSearch(event.target.value)}
-                placeholder="Buscar casos por RUT"
+                placeholder="Buscar por RUT de estudiante"
                 className="w-full rounded-full border border-slate-200 bg-white px-4 py-2 text-sm text-slate-700 focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-200"
               />
-              <span className="pointer-events-none absolute inset-y-0 right-4 flex items-center text-slate-400">⌕</span>
+              <span className="pointer-events-none absolute inset-y-0 right-4 flex items-center text-slate-400">🔍</span>
             </div>
           </div>
         </div>
-        <div className="space-y-4">
-          {visibleAdvisorCards.length === 0 ? (
+        <div className="space-y-3">
+          {asesoresFiltrados.length === 0 ? (
             <p className="rounded-2xl border border-dashed border-slate-200 p-6 text-center text-sm text-slate-500">
               {rutSearch
-                ? 'No encontramos casos con ese RUT en la lista destacada.'
-                : 'No hay asesores en la lista destacada con registros disponibles.'}
+                ? 'No encontramos casos con ese RUT.'
+                : 'No hay asesores con registros disponibles.'}
             </p>
           ) : (
-            visibleAdvisorCards.map((advisor) => (
-              <AdvisorCard
-                key={advisor.asesor_id}
-                advisor={advisor}
-                expanded={expandedAdvisors.has(advisor.asesor_id)}
-                onToggle={() => toggleAdvisorCases(advisor.asesor_id)}
-                rutFilter={rutSearch}
-              />
-            ))
-          )}
-        </div>
-      </section>
-
-      <section className="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-slate-100">
-        <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
-          <div>
-            <h2 className="text-xl font-semibold text-slate-900">Entradas del esquema</h2>
-            <p className="text-sm text-slate-500">Filtra por estado o busca por nombre, correo o programa.</p>
-          </div>
-          <div className="flex rounded-full border border-slate-200 bg-slate-50 px-4 py-2 text-sm text-slate-500">
-            Total asesores: <span className="ml-2 font-semibold text-slate-900">{summary.totalAsesores}</span>
-          </div>
-        </div>
-
-        <div className="mt-4 flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
-          <div className="flex flex-wrap gap-2">
-            {FILTER_OPTIONS.map((option) => (
-              <button
-                key={option.id}
-                onClick={() => {
-                  setFilter(option.id);
-                  setEntriesRequested(true);
-                }}
-                className={`rounded-full px-4 py-1 text-sm font-medium transition ${
-                  filter === option.id
-                    ? 'bg-slate-900 text-white shadow'
-                    : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-                }`}
-              >
-                {option.label}
-                {option.id === 'all'
-                  ? ` ${totalEntries}`
-                  : option.id === 'active'
-                    ? ` ${summary.totalActivos}`
-                    : option.id === 'pending'
-                      ? ` ${summary.totalPendientes}`
-                      : ` ${summary.totalExpirados}`}
-              </button>
-            ))}
-          </div>
-          <div className="relative w-full md:w-72">
-            <input
-              type="search"
-              value={query}
-              onChange={(event) => setQuery(event.target.value)}
-              placeholder="Buscar por asesor, estudiante o programa"
-              className="w-full rounded-full border border-slate-200 bg-white px-4 py-2 text-sm text-slate-700 focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-200"
-            />
-            <span className="pointer-events-none absolute inset-y-0 right-4 flex items-center text-slate-400">⌕</span>
-          </div>
-        </div>
-
-        <div className="mt-6 overflow-x-auto">
-          {entriesRequested ? (
-            <table className="min-w-full divide-y divide-slate-100 text-sm">
-              <thead className="bg-slate-50 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">
-                <tr>
-                  <th className="px-4 py-3">Asesor</th>
-                  <th className="px-4 py-3">Estudiante</th>
-                  <th className="px-4 py-3">Programa</th>
-                  <th className="px-4 py-3">Estado</th>
-                  <th className="px-4 py-3">Fecha matrícula</th>
-                  <th className="px-4 py-3">Sede</th>
-                  <th className="px-4 py-3">Categorías</th>
-                  <th className="px-4 py-3">Acciones</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100 bg-white text-slate-700">
-                {filteredEntries.length === 0 ? (
-                  <tr>
-                    <td colSpan="8" className="px-4 py-6 text-center text-slate-400">
-                      No encontramos registros con esos filtros.
-                    </td>
-                  </tr>
-                ) : (
-                  filteredEntries.map((entry) => (
-                    <tr key={entry.comision_id ? `comision-${entry.comision_id}` : `estudiante-${entry.rut}`} className="hover:bg-slate-50">
-                      <td className="px-4 py-3">
-                        <div className="font-semibold text-slate-900">{entry.advisorName}</div>
-                        <p className="text-xs text-slate-500">{entry.advisorEmail || 'Sin correo'}</p>
-                      </td>
-                      <td className="px-4 py-3">{entry.estudiante}</td>
-                      <td className="px-4 py-3">{entry.programa}</td>
-                      <td className="px-4 py-3">
-                        <span className={`inline-flex rounded-full px-3 py-1 text-xs font-semibold ${entry.estado.className}`}>
-                          {entry.estado.label}
+            asesoresFiltrados.map((asesor) => (
+              <div key={asesor.nombre} className="rounded-xl border border-slate-200 bg-white overflow-hidden">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setExpandedAdvisors((prev) => {
+                      const next = new Set(prev);
+                      if (next.has(asesor.nombre)) {
+                        next.delete(asesor.nombre);
+                      } else {
+                        next.add(asesor.nombre);
+                      }
+                      return next;
+                    });
+                  }}
+                  className="w-full px-4 py-3 text-left hover:bg-slate-50 transition"
+                >
+                  <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-2">
+                    <div className="flex items-center gap-3">
+                      <span className="text-lg">{expandedAdvisors.has(asesor.nombre) ? '▼' : '▶'}</span>
+                      <div>
+                        <p className="font-semibold text-slate-800">{asesor.nombre}</p>
+                        <p className="text-sm text-slate-500">{asesor.casos.length} casos</p>
+                      </div>
+                    </div>
+                    <div className="flex flex-wrap gap-3 text-sm">
+                      <span className="rounded-full bg-slate-100 px-3 py-1 font-medium text-slate-700">
+                        Total: {asesor.totalMonto.toLocaleString('es-CL', { style: 'currency', currency: 'CLP' })}
+                      </span>
+                      <span className="rounded-full bg-emerald-100 px-3 py-1 font-medium text-emerald-700">
+                        ✓ {asesor.pagados} pagados
+                      </span>
+                      {asesor.pendientes > 0 && (
+                        <span className="rounded-full bg-amber-100 px-3 py-1 font-medium text-amber-700">
+                          ⏳ {asesor.pendientes} pendientes
                         </span>
-                      </td>
-                      <td className="px-4 py-3">{entry.fecha ? new Date(entry.fecha).toLocaleDateString() : '—'}</td>
-                      <td className="px-4 py-3">{entry.sede}</td>
-                      <td className="px-4 py-3 text-xs text-slate-500">{entry.categorias.length ? entry.categorias.join(', ') : 'Sin categoría'}</td>
-                      <td className="px-4 py-3">
-                        <div className="flex flex-wrap gap-2 text-xs">
-                          <button
-                            type="button"
-                            onClick={() => openEditDialog(entry)}
-                            disabled={!entry.comision_id}
-                            className="rounded-full border border-slate-200 px-3 py-1 font-semibold text-slate-600 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
-                          >
-                            Editar
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => handleDeleteStudent(entry)}
-                            disabled={!entry.comision_id || deletingId === entry.comision_id}
-                            className="rounded-full border border-rose-200 px-3 py-1 font-semibold text-rose-600 transition hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-50"
-                          >
-                            {deletingId === entry.comision_id ? 'Eliminando…' : 'Eliminar'}
-                          </button>
-                        </div>
-                      </td>
-                    </tr>
-                  ))
+                      )}
+                      {asesor.observados > 0 && (
+                        <span className="rounded-full bg-rose-100 px-3 py-1 font-medium text-rose-700">
+                          ⚠ {asesor.observados} observados
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                </button>
+                {expandedAdvisors.has(asesor.nombre) && (
+                  <div className="border-t border-slate-100 bg-slate-50 p-4">
+                    <div className="overflow-x-auto">
+                      <table className="min-w-full divide-y divide-slate-200 text-sm">
+                        <thead>
+                          <tr className="text-left text-xs uppercase text-slate-500">
+                            <th className="px-3 py-2">RUT</th>
+                            <th className="px-3 py-2">Estudiante</th>
+                            <th className="px-3 py-2">Programa</th>
+                            <th className="px-3 py-2">Monto</th>
+                            <th className="px-3 py-2">Estado</th>
+                            <th className="px-3 py-2">Fecha</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-100">
+                          {asesor.casos
+                            .filter((caso) => {
+                              if (!rutSearch) return true;
+                              return normalizeRut(caso.rut_estudiante || '').includes(normalizeRut(rutSearch));
+                            })
+                            .map((caso) => (
+                            <tr key={caso.id} className="hover:bg-white">
+                              <td className="px-3 py-2 font-mono text-slate-600">{caso.rut_estudiante}</td>
+                              <td className="px-3 py-2">{caso.title}</td>
+                              <td className="px-3 py-2 text-slate-600">{caso.category}</td>
+                              <td className="px-3 py-2">{Number(caso.amount).toLocaleString('es-CL', { style: 'currency', currency: 'CLP' })}</td>
+                              <td className="px-3 py-2">
+                                <span className={`inline-block rounded-full px-2 py-0.5 text-xs font-semibold ${
+                                  caso.status?.toLowerCase() === 'pagado' ? 'bg-emerald-100 text-emerald-700' : 
+                                  caso.status?.toLowerCase().includes('pendiente') ? 'bg-amber-100 text-amber-700' : 
+                                  'bg-slate-100 text-slate-700'
+                                }`}>
+                                  {caso.status}
+                                </span>
+                              </td>
+                              <td className="px-3 py-2 text-slate-500">{caso.created_at ? new Date(caso.created_at).toLocaleDateString('es-CL') : '—'}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
                 )}
-              </tbody>
-            </table>
-          ) : (
-            <div className="rounded-2xl border border-slate-200 bg-slate-50 px-6 py-10 text-center text-slate-500">
-              Presiona <span className="font-semibold">“Todos”</span> o cualquier filtro para cargar los registros del esquema.
-            </div>
+              </div>
+            ))
           )}
         </div>
       </section>
@@ -531,7 +761,7 @@ const initialStudentForm = () => ({
 });
 
 function StudentDialog ({ open, onClose, onCreate, onUpdate, mode, entry, programs = [], advisors = [] }) {
-  const [form, setForm] = useState(initialStudentForm);
+  const [form, setForm] = useState(() => initialStudentForm());
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState(null);
 
@@ -550,7 +780,7 @@ function StudentDialog ({ open, onClose, onCreate, onUpdate, mode, entry, progra
         apellidos: entry.apellidos || '',
         correo: entry.correo || '',
         telefono: entry.telefono || '',
-        codPrograma: entry.cod_programa || entry.codPrograma || '',
+        codPrograma: entry.cod_programa || '',
         nombrePrograma: entry.programa_nombre || entry.nombrePrograma || '',
         centroCostos: entry.centro_costos || '',
         asesorId: entry.asesor_id ? String(entry.asesor_id) : '',
@@ -584,7 +814,7 @@ function StudentDialog ({ open, onClose, onCreate, onUpdate, mode, entry, progra
       setForm((prev) => ({ ...prev, codPrograma: '', nombrePrograma: '' }));
       return;
     }
-    const selectedProgram = programs.find((program) => program.cod_banner === selectedCode);
+    const selectedProgram = programs.find((program) => program.cod_programa === selectedCode);
     setForm((prev) => ({
       ...prev,
       codPrograma: selectedCode,
@@ -634,18 +864,18 @@ function StudentDialog ({ open, onClose, onCreate, onUpdate, mode, entry, progra
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 px-4 py-6">
-      <div className="w-full max-w-xl rounded-2xl bg-white p-6 shadow-xl">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 px-4 py-6 overflow-y-auto">
+      <div className="w-full max-w-xl max-h-[90vh] overflow-y-auto rounded-2xl bg-white p-6 shadow-xl">
         <div className="flex items-start justify-between">
           <div>
             <p className="text-sm font-semibold uppercase tracking-wide text-indigo-500">{isEditMode ? 'Editar registro' : 'Nuevo estudiante'}</p>
-            <h3 className="text-2xl font-semibold text-slate-900">{isEditMode ? 'Actualizar registro del esquema' : 'Registrar estudiante y programa'}</h3>
-            <p className="mt-1 text-sm text-slate-500">Los campos marcados con * son obligatorios.</p>
+            <h3 className="text-xl font-semibold text-slate-900">{isEditMode ? 'Actualizar registro' : 'Registrar estudiante'}</h3>
+            <p className="mt-1 text-xs text-slate-500">Los campos marcados con * son obligatorios.</p>
           </div>
           <button onClick={onClose} className="text-slate-400 transition hover:text-slate-600">✕</button>
         </div>
 
-        <form className="mt-6 space-y-4" onSubmit={handleSubmit}>
+        <form className="mt-4 space-y-3" onSubmit={handleSubmit}>
           {error ? <p className="rounded border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">{error}</p> : null}
           <div className="grid gap-4 md:grid-cols-2">
             <label className="text-sm text-slate-600">
@@ -824,14 +1054,14 @@ function StudentDialog ({ open, onClose, onCreate, onUpdate, mode, entry, progra
             <label className="text-sm text-slate-600">
               Programa existente
               <select
-                value={form.codPrograma && programs.some((program) => program.cod_banner === form.codPrograma) ? form.codPrograma : ''}
+                value={form.codPrograma && programs.some((program) => program.cod_programa === form.codPrograma) ? form.codPrograma : ''}
                 onChange={handleProgramSelect}
                 className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-slate-800 focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-100"
               >
                 <option value="">Seleccionar de la lista</option>
                 {programs.map((program) => (
-                  <option key={program.cod_banner} value={program.cod_banner}>
-                    {program.cod_banner} · {program.nombre}
+                  <option key={program.cod_programa} value={program.cod_programa}>
+                    {program.cod_programa} · {program.nombre}
                   </option>
                 ))}
               </select>
@@ -865,7 +1095,7 @@ function StudentDialog ({ open, onClose, onCreate, onUpdate, mode, entry, progra
             </label>
           </div>
 
-          <div className="flex justify-end gap-3 pt-2">
+          <div className="flex justify-end gap-3 pt-3 border-t border-slate-100 mt-4">
             <button
               type="button"
               className="rounded-full border border-slate-200 px-5 py-2 text-sm font-semibold text-slate-600 transition hover:bg-slate-50"
@@ -879,7 +1109,7 @@ function StudentDialog ({ open, onClose, onCreate, onUpdate, mode, entry, progra
               className="rounded-full bg-indigo-600 px-5 py-2 text-sm font-semibold text-white transition hover:bg-indigo-500 disabled:cursor-not-allowed disabled:opacity-60"
               disabled={submitting}
             >
-              {submitting ? 'Guardando...' : isEditMode ? 'Actualizar registro' : 'Guardar registro'}
+              {submitting ? 'Guardando...' : isEditMode ? 'Actualizar' : 'Guardar'}
             </button>
           </div>
         </form>

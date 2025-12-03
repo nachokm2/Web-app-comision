@@ -87,6 +87,15 @@ export async function fetchAdminSchemaSnapshot () {
   }
 }
 
+export async function fetchAdminComisiones () {
+  try {
+    const { data } = await apiClient.get('/admin/comisiones');
+    return data.records;
+  } catch (error) {
+    throw parseError(error);
+  }
+}
+
 export async function createStudentEntry (payload) {
   try {
     const { data } = await apiClient.post('/admin/students', payload);

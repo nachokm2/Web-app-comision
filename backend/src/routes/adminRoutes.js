@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { body, param } from 'express-validator';
-import { getSchemaSnapshot, createStudentEntry, updateStudentEntry, deleteStudentEntry } from '../controllers/adminController.js';
+import { getSchemaSnapshot, createStudentEntry, updateStudentEntry, deleteStudentEntry, listAllComisiones } from '../controllers/adminController.js';
 import { requireAuth, requireRole } from '../middleware/auth.js';
 import validateRequest from '../utils/validateRequest.js';
 
@@ -8,6 +8,7 @@ const router = Router();
 
 router.use(requireAuth, requireRole('admin'));
 router.get('/schema', getSchemaSnapshot);
+router.get('/comisiones', listAllComisiones);
 router.post(
 	'/students',
 	[

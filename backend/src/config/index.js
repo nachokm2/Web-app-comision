@@ -9,7 +9,8 @@ const config = {
   sessionCookieName: process.env.SESSION_COOKIE_NAME || 'webapp_session',
   sessionTtlMinutes: Number(process.env.SESSION_TTL_MINUTES || 60),
   logLevel: process.env.LOG_LEVEL || 'info',
-  allowedOrigin: process.env.ALLOWED_ORIGIN || '*'
+  // Importante: '*' no funciona con credentials=true. Por defecto, frontend local.
+  allowedOrigin: process.env.ALLOWED_ORIGIN || 'http://localhost:5173'
 };
 
 if (!config.databaseUrl) {

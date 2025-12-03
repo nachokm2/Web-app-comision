@@ -12,7 +12,7 @@ function Navbar () {
       <div className="flex items-center gap-3">
         <div className="text-right">
           <p className="text-sm font-medium text-slate-700">{user?.username}</p>
-          <p className="text-xs text-slate-500">Rol: {user?.role}</p>
+          <p className="text-xs text-slate-500">Rol: {(user?.rol || user?.role || '').toString()}</p>
         </div>
         <button
           onClick={logout}

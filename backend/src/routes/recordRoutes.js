@@ -10,13 +10,19 @@ router.use(requireAuth);
 
 router.get('/', listRecords);
 
+// Valores válidos del ENUM estado_de_pago
+const estadosDePagoValidos = ['Aprobado', 'Toku', 'Rechazado', 'Webpay', 'Pagado', 'Pendiente de pago'];
+
 router.post(
   '/',
   [
-    body('title').isString().trim().notEmpty(),
-    body('category').isString().trim().notEmpty(),
-    body('amount').isNumeric(),
-    body('status').isIn(['pending', 'approved', 'rejected'])
+    body('rut_estudiante').optional().isString().trim(),
+    body('cod_programa').optional().isString().trim(),
+    body('version_programa').optional().isInt(),
+    body('matricula').optional().isNumeric(),
+    body('arancel').optional().isNumeric(),
+    body('estado_de_pago').optional().isIn(estadosDePagoValidos),
+    body('fecha_matricula').optional().isISO8601()
   ],
   validateRequest,
   createRecord
@@ -35,10 +41,8 @@ router.put(
   '/:recordId',
   [
     recordIdValidator,
-    body('title').isString().trim().notEmpty(),
-    body('category').isString().trim().notEmpty(),
-    body('amount').isNumeric(),
-    body('status').isIn(['pending', 'approved', 'rejected'])
+    body('comentario_asesor').optional().isString().trim(),
+    body('estado_de_pago').optional().isIn(estadosDePagoValidos)
   ],
   validateRequest,
   updateRecord

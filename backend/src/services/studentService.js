@@ -16,12 +16,12 @@ async function upsertProgram (client, { codPrograma, nombrePrograma, centroCosto
     throw new Error('El código de programa es obligatorio');
   }
   const { rows } = await client.query(
-    `INSERT INTO ${schemaRef}."programas" (cod_banner, nombre, centro_de_costos)
+    `INSERT INTO ${schemaRef}."programas" (cod_programa, nombre, centro_de_costos)
      VALUES ($1, $2, $3)
-     ON CONFLICT (cod_banner) DO UPDATE SET
+     ON CONFLICT (cod_programa) DO UPDATE SET
        nombre = EXCLUDED.nombre,
        centro_de_costos = COALESCE(EXCLUDED.centro_de_costos, ${schemaRef}."programas".centro_de_costos)
-     RETURNING cod_banner, nombre, centro_de_costos`,
+     RETURNING cod_programa, nombre, centro_de_costos`,
     [codPrograma, nombrePrograma, centroCostos ?? null]
   );
   return rows[0];
@@ -118,7 +118,7 @@ export async function createStudentWithProgram ({
     const student = await upsertStudent(client, { rut, nombres, apellidos, correo, telefono });
     const commission = await insertCommission(client, {
       rut: student.rut,
-      codPrograma: program.cod_banner,
+      codPrograma: program.cod_programa,
       asesorId,
       estadoPago,
       fechaMatricula,

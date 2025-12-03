@@ -1,5 +1,6 @@
 import { getAllTableData, getCasesByAdvisor, getStudentEntries } from '../services/schemaService.js';
 import { createStudentWithProgram, updateStudentCommissionEntry, deleteCommissionEntry } from '../services/studentService.js';
+import db from '../db/pool.js';
 
 function toNullable (value) {
   return value === undefined || value === null || value === '' ? undefined : value;
@@ -14,13 +15,10 @@ function toNumberOrUndefined (value) {
 }
 
 export async function getSchemaSnapshot (req, res) {
-  const [tables, casesByAdvisor, studentEntries] = await Promise.all([
-    getAllTableData(),
-    getCasesByAdvisor(),
-    getStudentEntries()
-  ]);
-
-  res.json({ tables, casesByAdvisor, studentEntries });
+  // Schema snapshot deshabilitado temporalmente (legacy_asesor_id/is_asesor no existen)
+  // Solo devuelvo estructura básica
+  const tables = await getAllTableData();
+  res.json({ tables, casesByAdvisor: [], studentEntries: [] });
 }
 
 export async function createStudentEntry (req, res) {
@@ -106,4 +104,39 @@ export async function deleteStudentEntry (req, res) {
   } catch (error) {
     throw error;
   }
+}
+
+// Lista todas las comisiones enriquecidas (solo admin)
+export async function listAllComisiones (req, res) {
+  const baseQuery = `
+    SELECT c.id,
+           COALESCE(NULLIF(TRIM(CONCAT(e.nombres, ' ', e.apellidos)), ''), e.nombres, c.cod_programa) AS title,
+           COALESCE(p.nombre, c.cod_programa) AS category,
+           c.valor_comision AS amount,
+           COALESCE(c.estado_de_pago::text, 'pending') AS status,
+           c.fecha_matricula AS created_at,
+           c.rut_estudiante,
+           c.cod_programa,
+           c.version_programa,
+           u.nombre_completo AS asesor
+    FROM comisiones c
+    LEFT JOIN estudiantes e ON c.rut_estudiante = e.rut
+    LEFT JOIN usuarios u ON c.id_asesor = u.bx24_id
+    LEFT JOIN programas p ON c.cod_programa = p.cod_programa
+    ORDER BY c.fecha_matricula DESC
+  `;
+  const { rows } = await db.query(baseQuery);
+  const records = rows.map((r) => ({
+    id: r.id,
+    title: r.title || 'Sin título',
+    category: r.category || 'Sin categoría',
+    amount: Number(r.amount) || 0,
+    status: r.status?.toLowerCase() || 'pending',
+    created_at: r.created_at,
+    rut_estudiante: r.rut_estudiante,
+    cod_programa: r.cod_programa,
+    version_programa: r.version_programa,
+    asesor: r.asesor
+  }));
+  res.json({ records });
 }

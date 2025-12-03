@@ -40,9 +40,11 @@ export async function getAllTableData () {
 }
 
 async function getAdvisorDirectory () {
+  // Ahora usamos bx24_id en lugar de legacy_asesor_id
+  // y no hay columna is_asesor, se asume que cualquier usuario con bx24_id es asesor
   const { rows } = await db.query(`
     SELECT
-      legacy_asesor_id AS id,
+      bx24_id AS id,
       nombre_completo,
       correo_institucional AS correo,
       correo_personal,
@@ -50,7 +52,7 @@ async function getAdvisorDirectory () {
       rut,
       sede
     FROM ${schemaRef}."usuarios"
-    WHERE is_asesor = TRUE AND legacy_asesor_id IS NOT NULL
+    WHERE bx24_id IS NOT NULL
     ORDER BY nombre_completo
   `);
   return rows;
@@ -74,7 +76,7 @@ export async function getCasesByAdvisor () {
         ARRAY_REMOVE(ARRAY_AGG(DISTINCT cat.nombre_del_caso), NULL) AS categorias
       FROM ${schemaRef}."comisiones" c
       LEFT JOIN ${schemaRef}."estudiantes" e ON e.rut = c.rut_estudiante
-      LEFT JOIN ${schemaRef}."programas" p ON p.cod_banner = c.cod_programa
+      LEFT JOIN ${schemaRef}."programas" p ON p.cod_programa = c.cod_programa
       LEFT JOIN ${schemaRef}."categoria_comision" cc ON cc.id_comision = c.id
       LEFT JOIN ${schemaRef}."categorias" cat ON cat.id = cc.id_categoria
       GROUP BY c.id, c.id_asesor, c.valor_comision, c.matricula, c.estado_de_pago, c.version_programa,
@@ -148,19 +150,19 @@ export async function getStudentEntries () {
       c.id_asesor AS asesor_id,
       a.nombre_completo AS asesor_nombre,
       a.correo_institucional AS asesor_correo,
-      p.cod_banner,
+      p.cod_programa,
       p.nombre AS programa_nombre,
       ARRAY_REMOVE(ARRAY_AGG(DISTINCT cat.nombre_del_caso), NULL) AS categorias
     FROM ${schemaRef}."estudiantes" e
     LEFT JOIN ${schemaRef}."comisiones" c ON c.rut_estudiante = e.rut
     LEFT JOIN ${schemaRef}."usuarios" a ON a.legacy_asesor_id = c.id_asesor AND a.is_asesor = TRUE
-    LEFT JOIN ${schemaRef}."programas" p ON p.cod_banner = c.cod_programa
+    LEFT JOIN ${schemaRef}."programas" p ON p.cod_programa = c.cod_programa
     LEFT JOIN ${schemaRef}."categoria_comision" cc ON cc.id_comision = c.id
     LEFT JOIN ${schemaRef}."categorias" cat ON cat.id = cc.id_categoria
     GROUP BY e.rut, e.nombres, e.apellidos, e.correo, e.telefono,
       c.id, c.estado_de_pago, c.fecha_matricula, c.sede, c.valor_comision, c.matricula,
       c.id_asesor, a.nombre_completo, a.correo_institucional,
-      p.cod_banner, p.nombre
+      p.cod_programa, p.nombre
     ORDER BY COALESCE(c.fecha_matricula, DATE '1900-01-01') DESC, e.apellidos, e.nombres
   `);
 
@@ -179,7 +181,7 @@ export async function getStudentEntries () {
     asesor_id: row.asesor_id,
     asesor_nombre: row.asesor_nombre,
     asesor_correo: row.asesor_correo,
-    cod_programa: row.cod_banner,
+    cod_programa: row.cod_programa,
     programa_nombre: row.programa_nombre,
     categorias: Array.isArray(row.categorias) ? row.categorias : []
   }));
