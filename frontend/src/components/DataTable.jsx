@@ -1,11 +1,30 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 
-function DataTable ({ records, onEdit, onDelete }) {
+function DataTable ({ records, onEdit, onDelete, onFiltersChange }) {
   const [filterRut, setFilterRut] = useState('');
   const [filterPrograma, setFilterPrograma] = useState('');
-  const [filterFecha, setFilterFecha] = useState('');
+  const [filterFechaDesde, setFilterFechaDesde] = useState('');
+  const [filterFechaHasta, setFilterFechaHasta] = useState('');
+  const [tempFechaDesde, setTempFechaDesde] = useState('');
+  const [tempFechaHasta, setTempFechaHasta] = useState('');
   const [currentPage, setCurrentPage] = useState(1);
   const pageSize = 50;
+
+  const hasPendingDateChange = tempFechaDesde !== filterFechaDesde || tempFechaHasta !== filterFechaHasta;
+  const hasActiveFilters = Boolean(filterRut || filterPrograma || filterFechaDesde || filterFechaHasta);
+
+  const filtersLabel = useMemo(() => {
+    if (!hasActiveFilters) return '';
+    const parts = [];
+    if (filterRut) parts.push(`RUT: ${filterRut}`);
+    if (filterPrograma) parts.push(`Programa: ${filterPrograma}`);
+    if (filterFechaDesde || filterFechaHasta) {
+      const from = filterFechaDesde || '—';
+      const to = filterFechaHasta || '—';
+      parts.push(`Fechas: ${from} → ${to}`);
+    }
+    return parts.join(' | ');
+  }, [hasActiveFilters, filterRut, filterPrograma, filterFechaDesde, filterFechaHasta]);
 
   // Lista única de programas para el select
   const programas = useMemo(() => {
@@ -25,14 +44,19 @@ function DataTable ({ records, onEdit, onDelete }) {
       }
       // Filtro por programa
       if (filterPrograma && record.category !== filterPrograma) return false;
-      // Filtro por fecha
-      if (filterFecha) {
-        const recordDate = record.created_at ? new Date(record.created_at).toISOString().split('T')[0] : '';
-        if (recordDate !== filterFecha) return false;
+      // Filtro por rango de fechas
+      if (filterFechaDesde) {
+        const from = new Date(filterFechaDesde);
+        if (!record.created_at || new Date(record.created_at) < from) return false;
+      }
+      if (filterFechaHasta) {
+        const to = new Date(filterFechaHasta);
+        to.setHours(23, 59, 59, 999);
+        if (!record.created_at || new Date(record.created_at) > to) return false;
       }
       return true;
     });
-  }, [records, filterRut, filterPrograma, filterFecha]);
+  }, [records, filterRut, filterPrograma, filterFechaDesde, filterFechaHasta]);
 
   // Paginación
   const totalPages = Math.ceil(filteredRecords.length / pageSize);
@@ -41,6 +65,15 @@ function DataTable ({ records, onEdit, onDelete }) {
     return filteredRecords.slice(start, start + pageSize);
   }, [filteredRecords, currentPage]);
 
+  useEffect(() => {
+    onFiltersChange?.({
+      hasFilters: hasActiveFilters,
+      label: filtersLabel,
+      count: filteredRecords.length,
+      records: filteredRecords
+    });
+  }, [hasActiveFilters, filtersLabel, filteredRecords, onFiltersChange]);
+
   if (!records.length) {
     return <p className="text-sm text-slate-500">No hay registros asignados.</p>;
   }
@@ -48,7 +81,7 @@ function DataTable ({ records, onEdit, onDelete }) {
   return (
     <div className="space-y-4">
       {/* Filtros */}
-      <div className="grid gap-3 md:grid-cols-4 bg-white p-4 rounded-lg border border-slate-200">
+      <div className="grid gap-3 rounded-lg border border-slate-200 bg-white p-4 md:grid-cols-5">
         <div>
           <label className="block text-xs font-medium text-slate-500 mb-1">Filtrar por RUT</label>
           <input
@@ -72,20 +105,49 @@ function DataTable ({ records, onEdit, onDelete }) {
             ))}
           </select>
         </div>
-        <div>
-          <label className="block text-xs font-medium text-slate-500 mb-1">Filtrar por Fecha Matrícula</label>
-          <input
-            type="date"
-            value={filterFecha}
-            onChange={(e) => setFilterFecha(e.target.value)}
-            className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-blue-400 focus:outline-none focus:ring-2 focus:ring-blue-100"
-          />
+        <div className="md:col-span-2">
+          <label className="block text-xs font-medium text-slate-500 mb-1">Rango de fechas</label>
+          <div className="flex items-center gap-2">
+            <input
+              type="date"
+              value={tempFechaDesde}
+              onChange={(e) => setTempFechaDesde(e.target.value)}
+              className="flex-1 rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-blue-400 focus:outline-none focus:ring-2 focus:ring-blue-100"
+            />
+            <span className="text-xs text-slate-400">a</span>
+            <input
+              type="date"
+              value={tempFechaHasta}
+              onChange={(e) => setTempFechaHasta(e.target.value)}
+              className="flex-1 rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-blue-400 focus:outline-none focus:ring-2 focus:ring-blue-100"
+            />
+          </div>
         </div>
         <div className="flex items-end">
-          {(filterRut || filterPrograma || filterFecha) && (
+          {hasPendingDateChange ? (
             <button
               type="button"
-              onClick={() => { setFilterRut(''); setFilterPrograma(''); setFilterFecha(''); }}
+              onClick={() => {
+                setFilterFechaDesde(tempFechaDesde || '');
+                setFilterFechaHasta(tempFechaHasta || '');
+                setCurrentPage(1);
+              }}
+              className="w-full rounded-lg bg-indigo-600 px-3 py-2 text-sm font-semibold text-white transition hover:bg-indigo-500"
+            >
+              Aplicar
+            </button>
+          ) : hasActiveFilters && (
+            <button
+              type="button"
+              onClick={() => {
+                setFilterRut('');
+                setFilterPrograma('');
+                setFilterFechaDesde('');
+                setFilterFechaHasta('');
+                setTempFechaDesde('');
+                setTempFechaHasta('');
+                setCurrentPage(1);
+              }}
               className="w-full rounded-lg border border-slate-300 bg-slate-50 px-3 py-2 text-sm font-medium text-slate-600 hover:bg-slate-100"
             >
               Limpiar filtros
@@ -97,7 +159,7 @@ function DataTable ({ records, onEdit, onDelete }) {
       {/* Contador de resultados */}
       <p className="text-sm text-slate-500">
         Mostrando {((currentPage - 1) * pageSize) + 1} - {Math.min(currentPage * pageSize, filteredRecords.length)} de {filteredRecords.length} registros
-        {(filterRut || filterPrograma || filterFecha) && ` (filtrado de ${records.length} total)`}
+        {hasActiveFilters && ` (filtrado de ${records.length} total)`}
       </p>
 
       {/* Tabla */}
@@ -129,7 +191,7 @@ function DataTable ({ records, onEdit, onDelete }) {
                   <td className="px-4 py-2 text-sm">{record.category}</td>
                   <td className="px-4 py-2 text-sm">{Number(record.amount).toLocaleString('es-CL', { style: 'currency', currency: 'CLP' })}</td>
                   <td className="px-4 py-2 text-sm">
-                    <span className={`rounded-full px-2 py-1 text-xs font-semibold capitalize ${statusBadge(record.status)}`}>
+                    <span className={`rounded-full px-2 py-1 text-xs font-semibold capitalize ${getStatusStyles(record.status)}`}>
                       {record.status}
                     </span>
                   </td>
@@ -192,13 +254,25 @@ function DataTable ({ records, onEdit, onDelete }) {
   );
 }
 
-function statusBadge (status) {
-  const colorMap = {
-    pending: 'bg-amber-100 text-amber-800',
-    approved: 'bg-emerald-100 text-emerald-800',
-    rejected: 'bg-rose-100 text-rose-800'
-  };
-  return colorMap[status] || 'bg-slate-100 text-slate-700';
+const STATUS_VARIANTS = {
+  active: 'bg-emerald-100 text-emerald-700',
+  pending: 'bg-amber-100 text-amber-700',
+  expired: 'bg-rose-100 text-rose-700',
+  default: 'bg-slate-100 text-slate-600'
+};
+
+function getStatusStyles (value) {
+  const normalized = (value || '').toLowerCase();
+  if (['pagado', 'aprobado', 'activo'].some((keyword) => normalized.includes(keyword))) {
+    return STATUS_VARIANTS.active;
+  }
+  if (['pendiente', 'revision', 'revisión', 'espera'].some((keyword) => normalized.includes(keyword))) {
+    return STATUS_VARIANTS.pending;
+  }
+  if (['expirado', 'inactivo', 'rechazado', 'cancelado', 'observado'].some((keyword) => normalized.includes(keyword))) {
+    return STATUS_VARIANTS.expired;
+  }
+  return STATUS_VARIANTS.default;
 }
 
 export default DataTable;

@@ -1,4 +1,4 @@
-import { useNavigate, useLocation } from 'react-router-dom';
+import { useNavigate, useLocation, Link } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext.jsx';
 import LoginForm from '../components/LoginForm.jsx';
 import { useState } from 'react';
@@ -28,6 +28,11 @@ function LoginPage () {
         <h1 className="text-2xl font-bold text-slate-800 mb-2">Bienvenido</h1>
         <p className="mb-6 text-sm text-slate-500">Ingresa tus credenciales corporativas para continuar.</p>
         <LoginForm onSubmit={handleLogin} loading={submitting} error={error} />
+        <div className="mt-4 text-center">
+          <Link to="/forgot-password" className="text-sm text-blue-600 hover:underline">
+            ¿Olvidaste tu contraseña?
+          </Link>
+        </div>
       </div>
     </div>
   );

@@ -1,7 +1,8 @@
 import axios from 'axios';
 
+const apiBase = import.meta.env.VITE_API_BASE_URL || '/api';
 const apiClient = axios.create({
-  baseURL: import.meta.env.VITE_API_BASE_URL || 'http://localhost:4000/api',
+  baseURL: apiBase,
   withCredentials: true,
   headers: {
     'Content-Type': 'application/json'
@@ -52,6 +53,15 @@ export async function fetchRecords () {
   }
 }
 
+export async function fetchProgramsCatalog () {
+  try {
+    const { data } = await apiClient.get('/records/programs');
+    return data.programs;
+  } catch (error) {
+    throw parseError(error);
+  }
+}
+
 export async function createRecord (payload) {
   try {
     const { data } = await apiClient.post('/records', payload);
@@ -78,10 +88,39 @@ export async function deleteRecord (recordId) {
   }
 }
 
+export async function uploadBulkRecords (file) {
+  const formData = new FormData();
+  formData.append('file', file);
+  try {
+    const { data } = await apiClient.post('/records/bulk', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' }
+    });
+    return data;
+  } catch (error) {
+    throw parseError(error);
+  }
+}
+
 export async function fetchAdminSchemaSnapshot () {
   try {
     const { data } = await apiClient.get('/admin/schema');
     return data;
+  } catch (error) {
+    throw parseError(error);
+  }
+}
+
+export async function requestPasswordReset (username) {
+  try {
+    await apiClient.post('/auth/password-reset/request', { username });
+  } catch (error) {
+    throw parseError(error);
+  }
+}
+
+export async function confirmPasswordReset (payload) {
+  try {
+    await apiClient.post('/auth/password-reset/confirm', payload);
   } catch (error) {
     throw parseError(error);
   }
@@ -117,6 +156,32 @@ export async function updateStudentEntry (entryId, payload) {
 export async function deleteStudentEntry (entryId) {
   try {
     await apiClient.delete(`/admin/students/${entryId}`);
+  } catch (error) {
+    throw parseError(error);
+  }
+}
+
+function extractFilename (disposition) {
+  if (!disposition) return null;
+  const match = /filename\*?=([^;]+)/i.exec(disposition);
+  if (!match) return null;
+  const value = match[1].trim().replace(/^UTF-8''/, '');
+  return decodeURIComponent(value.replace(/"/g, ''));
+}
+
+export async function downloadRecordCsv (recordId) {
+  try {
+    const response = await apiClient.get(`/records/${recordId}/export`, { responseType: 'blob' });
+    const filename = extractFilename(response.headers['content-disposition']) || `comision-${recordId}.csv`;
+    const blob = new Blob([response.data], { type: 'text/csv;charset=utf-8;' });
+    const url = window.URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.setAttribute('download', filename);
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    window.URL.revokeObjectURL(url);
   } catch (error) {
     throw parseError(error);
   }

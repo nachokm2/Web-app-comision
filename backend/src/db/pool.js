@@ -4,9 +4,12 @@ import logger from '../logger/index.js';
 
 const { Pool } = pkg;
 
+const useSsl = String(process.env.DATABASE_SSL || '').toLowerCase() === 'true'
+  || process.env.NODE_ENV === 'production';
+
 const pool = new Pool({
   connectionString: config.databaseUrl,
-  ssl: false  // SiteGround PostgreSQL no soporta SSL
+  ssl: useSsl ? { rejectUnauthorized: false } : false
 });
 
 pool.on('connect', () => logger.info('Conexión a PostgreSQL establecida.'));

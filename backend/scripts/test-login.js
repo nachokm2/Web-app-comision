@@ -11,7 +11,7 @@ if (!username || !password) {
 }
 
 async function run () {
-  const { rows } = await db.query('SELECT password_hash FROM users WHERE username = $1', [username]);
+  const { rows } = await db.query('SELECT password_hash FROM usuarios WHERE username = $1', [username]);
   if (!rows.length) {
     console.error('Usuario no encontrado');
     process.exit(1);

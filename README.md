@@ -78,7 +78,19 @@ SESSION_COOKIE_NAME=webapp_session
 SESSION_TTL_MINUTES=60
 LOG_LEVEL=info
 ALLOWED_ORIGIN=http://localhost:5173
+APP_BASE_URL=http://localhost:5173
+SMTP_HOST=smtp.uautonoma.cl
+SMTP_PORT=587
+SMTP_SECURE=false
+SMTP_USER=usuario@uautonoma.cl
+SMTP_PASSWORD=contraseña-super-segura
+EMAIL_FROM="Comisiones UA <usuario@uautonoma.cl>"
+PASSWORD_RESET_TOKEN_TTL_MINUTES=30
 ```
+
+- `APP_BASE_URL` se usa para construir el enlace de restablecimiento enviado al correo institucional.
+- `SMTP_*`, `EMAIL_FROM` deben apuntar al servidor/transporte oficial de la universidad para que los mensajes salgan desde `correo_institucional`.
+- `PASSWORD_RESET_TOKEN_TTL_MINUTES` controla los minutos de vigencia del token que recibe el usuario antes de expirar.
 
 ### Frontend (`frontend/.env`)
 

@@ -1,6 +1,15 @@
 import jwt from 'jsonwebtoken';
 import config from '../config/index.js';
-import { validateCredentials, findUserById } from '../services/userService.js';
+import {
+  validateCredentials,
+  findUserById,
+  findUserByUsername,
+  findInstitutionalEmailByUsername,
+  updateUserPassword
+} from '../services/userService.js';
+import { createPasswordResetToken, consumePasswordResetToken } from '../services/passwordResetService.js';
+import { sendPasswordResetEmail } from '../services/emailService.js';
+import logger from '../logger/index.js';
 
 function buildToken (user) {
   return jwt.sign(
@@ -35,4 +44,45 @@ export async function me (req, res) {
 export function logout (req, res) {
   res.clearCookie(config.sessionCookieName);
   res.status(204).send();
+}
+
+export async function requestPasswordReset (req, res) {
+  const { username } = req.body;
+  try {
+    const user = await findUserByUsername(username);
+    if (!user) {
+      return res.status(204).send();
+    }
+
+    const institutionalEmail = await findInstitutionalEmailByUsername(user.username);
+    if (!institutionalEmail) {
+      logger.warn('Usuario sin correo institucional para restablecer', { username: user.username });
+      return res.status(204).send();
+    }
+
+    const { token, expiresAt } = await createPasswordResetToken(user.id);
+    const resetLink = `${config.appBaseUrl.replace(/\/$/, '')}/reset-password?token=${token}`;
+    await sendPasswordResetEmail({ to: institutionalEmail, username: user.username, resetLink, expiresAt });
+  } catch (error) {
+    logger.error('Error solicitando restablecimiento', { error: error.message });
+    return res.status(500).json({ message: 'No fue posible iniciar el restablecimiento. Intenta nuevamente.' });
+  }
+
+  return res.status(204).send();
+}
+
+export async function confirmPasswordReset (req, res) {
+  const { token, newPassword } = req.body;
+  try {
+    const userId = await consumePasswordResetToken(token);
+    if (!userId) {
+      return res.status(400).json({ message: 'Token inválido o expirado.' });
+    }
+
+    await updateUserPassword(userId, newPassword);
+    return res.status(204).send();
+  } catch (error) {
+    logger.error('Error confirmando restablecimiento', { error: error.message });
+    return res.status(500).json({ message: 'No fue posible actualizar la contraseña.' });
+  }
 }

@@ -54,7 +54,8 @@ async function insertCommission (client, {
   sede,
   valorComision,
   matricula,
-  versionPrograma
+  versionPrograma,
+  comentarioAsesor
 }) {
   if (!asesorId) {
     throw new Error('El ID del asesor es obligatorio');
@@ -69,9 +70,10 @@ async function insertCommission (client, {
        sede,
        valor_comision,
        matricula,
-       version_programa
-     ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-     RETURNING id, rut_estudiante, cod_programa, id_asesor, estado_de_pago, fecha_matricula, sede, valor_comision, matricula, version_programa`,
+       version_programa,
+       comentario_asesor
+     ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+     RETURNING id, rut_estudiante, cod_programa, id_asesor, estado_de_pago, fecha_matricula, sede, valor_comision, matricula, version_programa, comentario_asesor`,
     [
       rut,
       codPrograma,
@@ -81,7 +83,8 @@ async function insertCommission (client, {
       sede ?? null,
       toNullableNumber(valorComision),
       toNullableNumber(matricula),
-      versionPrograma ?? null
+      versionPrograma ?? null,
+      comentarioAsesor ?? null
     ]
   );
   return rows[0];
@@ -108,7 +111,8 @@ export async function createStudentWithProgram ({
   sede,
   valorComision,
   matricula,
-  versionPrograma
+  versionPrograma,
+  comentarioAsesor
 }) {
   const client = await db.connect();
   try {
@@ -125,7 +129,8 @@ export async function createStudentWithProgram ({
       sede,
       valorComision,
       matricula,
-      versionPrograma
+      versionPrograma,
+      comentarioAsesor
     });
 
     await client.query('COMMIT');

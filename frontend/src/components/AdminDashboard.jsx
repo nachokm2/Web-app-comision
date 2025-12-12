@@ -1,18 +1,37 @@
 ﻿import { useCallback, useEffect, useMemo, useState } from 'react';
 import { fetchAdminSchemaSnapshot, fetchAdminComisiones, createStudentEntry, updateStudentEntry, deleteStudentEntry } from '../services/api.js';
+import LoadingScreen from './LoadingScreen.jsx';
+import { buildCsvFromRecords, slugify } from '../utils/csvExport.js';
 
 const STATUS_VARIANTS = {
   active: { label: 'Activo', className: 'bg-emerald-100 text-emerald-700' },
   pending: { label: 'Pendiente', className: 'bg-amber-100 text-amber-700' },
-  expired: { label: 'Observado', className: 'bg-rose-100 text-rose-700' },
+  expired: { label: 'Rechazado', className: 'bg-rose-100 text-rose-700' },
   default: { label: 'Sin estado', className: 'bg-slate-100 text-slate-600' }
 };
+
+const STATUS_FILTER_LABELS = {
+  all: 'Total comisiones',
+  active: 'Pagados',
+  pending: 'Pendientes',
+  expired: 'Rechazados'
+};
+
+const currencyFormatter = new Intl.NumberFormat('es-CL', {
+  style: 'currency',
+  currency: 'CLP',
+  maximumFractionDigits: 0
+});
+
+function formatCurrency (value = 0) {
+  return currencyFormatter.format(Math.max(0, Number(value) || 0));
+}
 
 const FILTER_OPTIONS = [
   { id: 'all', label: 'Todos' },
   { id: 'active', label: 'Pagados' },
   { id: 'pending', label: 'Pendientes' },
-  { id: 'expired', label: 'Observados' }
+  { id: 'expired', label: 'Rechazados' }
 ];
 
 const FEATURED_ADVISOR_NAMES = [
@@ -50,6 +69,13 @@ function normalizeRut (value = '') {
   return value.replace(/[.\-]/g, '').trim().toLowerCase();
 }
 
+function formatDateLabel (value = '') {
+  if (!value) return '';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleDateString('es-CL');
+}
+
 function isFeaturedAdvisor (name) {
   if (!name) return false;
   return FEATURED_ADVISOR_SET.has(normalizeAdvisorName(name));
@@ -71,11 +97,31 @@ function AdminDashboard () {
   const [expandedAdvisors, setExpandedAdvisors] = useState(() => new Set());
   const [currentPage, setCurrentPage] = useState(1);
   const pageSize = 50;
+  const [showSplash, setShowSplash] = useState(true);
+  const [splashReady, setSplashReady] = useState(false);
+  const [isExportingCsv, setIsExportingCsv] = useState(false);
   
   // Filtros para la tabla de comisiones
   const [filterRut, setFilterRut] = useState('');
   const [filterAsesor, setFilterAsesor] = useState('');
   const [filterPrograma, setFilterPrograma] = useState('');
+  const [filterFechaDesde, setFilterFechaDesde] = useState('');
+  const [filterFechaHasta, setFilterFechaHasta] = useState('');
+  const [tempFechaDesde, setTempFechaDesde] = useState('');
+  const [tempFechaHasta, setTempFechaHasta] = useState('');
+  const [statusFilter, setStatusFilter] = useState('all');
+  const [currentMonthOnly, setCurrentMonthOnly] = useState(false);
+
+  const hasAnyFilter = Boolean(
+    filterRut ||
+    filterAsesor ||
+    filterPrograma ||
+    filterFechaDesde ||
+    filterFechaHasta ||
+    currentMonthOnly
+  );
+
+  const hasPendingDateChange = tempFechaDesde !== filterFechaDesde || tempFechaHasta !== filterFechaHasta;
 
   const loadSnapshot = useCallback(async () => {
     try {
@@ -95,6 +141,12 @@ function AdminDashboard () {
   useEffect(() => {
     loadSnapshot();
   }, [loadSnapshot]);
+
+  useEffect(() => {
+    if (!loading) {
+      setSplashReady(true);
+    }
+  }, [loading]);
 
   const handleCreateStudent = useCallback(async (payload) => {
     await createStudentEntry(payload);
@@ -165,28 +217,73 @@ function AdminDashboard () {
     return (snapshot.studentEntries || []).filter((entry) => isFeaturedAdvisor(entry.asesor_nombre));
   }, [snapshot]);
 
+  // Solo asesores que tienen al menos una comisión registrada
+  const advisorsWithComision = useMemo(() => {
+    if (!snapshot) return [];
+    const allAdvisors = snapshot.tables?.asesores || [];
+    if (!comisiones.length) return allAdvisors;
+
+    const advisorNamesWithComision = new Set(
+      comisiones
+        .map((c) => (c.asesor || '').trim())
+        .filter(Boolean)
+    );
+
+    return allAdvisors.filter((advisor) => advisorNamesWithComision.has((advisor.nombre_completo || '').trim()));
+  }, [snapshot, comisiones]);
+
   const summary = useMemo(() => {
-    // Usar comisiones para los conteos del dashboard
+    const now = new Date();
+    const currentMonth = now.getMonth();
+    const currentYear = now.getFullYear();
     const totalEntradas = comisiones.length;
-    const totalActivos = comisiones.filter((c) => {
-      const status = (c.status || '').toLowerCase();
-      return ['pagado', 'aprobado', 'activo'].some(k => status.includes(k));
-    }).length;
-    const totalPendientes = comisiones.filter((c) => {
-      const status = (c.status || '').toLowerCase();
-      return ['pendiente', 'revision', 'revisión', 'espera'].some(k => status.includes(k));
-    }).length;
-    const totalExpirados = comisiones.filter((c) => {
-      const status = (c.status || '').toLowerCase();
-      return ['expirado', 'inactivo', 'rechazado', 'cancelado', 'observado'].some(k => status.includes(k));
-    }).length;
-    const totalAsesores = featuredCases.length;
+    let totalMesActual = 0;
+    let totalActivos = 0;
+    let totalPendientes = 0;
+    let totalExpirados = 0;
+    let totalAmount = 0;
+    let monthAmount = 0;
+    let totalActivosAmount = 0;
+    let totalPendientesAmount = 0;
+    let totalExpiradosAmount = 0;
+
+    comisiones.forEach((comision) => {
+      const amount = Number(comision.amount) || 0;
+      totalAmount += amount;
+
+      if (comision.created_at) {
+        const createdDate = new Date(comision.created_at);
+        if (!Number.isNaN(createdDate.getTime()) && createdDate.getMonth() === currentMonth && createdDate.getFullYear() === currentYear) {
+          totalMesActual += 1;
+          monthAmount += amount;
+        }
+      }
+
+      const statusKind = normaliseStatus(comision.status).kind;
+      if (statusKind === 'active') {
+        totalActivos += 1;
+        totalActivosAmount += amount;
+      } else if (statusKind === 'pending') {
+        totalPendientes += 1;
+        totalPendientesAmount += amount;
+      } else if (statusKind === 'expired') {
+        totalExpirados += 1;
+        totalExpiradosAmount += amount;
+      }
+    });
+
     return {
-      totalAsesores,
+      totalAsesores: featuredCases.length,
       totalEntradas,
+      totalMesActual,
       totalActivos,
       totalPendientes,
-      totalExpirados
+      totalExpirados,
+      totalAmount,
+      monthAmount,
+      totalActivosAmount,
+      totalPendientesAmount,
+      totalExpiradosAmount
     };
   }, [comisiones, featuredCases]);
 
@@ -264,9 +361,78 @@ function AdminDashboard () {
     if (filterPrograma) {
       filtered = filtered.filter((c) => c.category === filterPrograma);
     }
+
+    // Filtro por rango de fechas (usando created_at)
+    if (filterFechaDesde) {
+      const from = new Date(filterFechaDesde);
+      filtered = filtered.filter((c) => c.created_at && new Date(c.created_at) >= from);
+    }
+
+    if (filterFechaHasta) {
+      const to = new Date(filterFechaHasta);
+      to.setHours(23, 59, 59, 999);
+      filtered = filtered.filter((c) => c.created_at && new Date(c.created_at) <= to);
+    }
+
+    // Filtro rápido por "Mes actual" usando created_at
+    if (currentMonthOnly) {
+      const now = new Date();
+      const currentMonth = now.getMonth();
+      const currentYear = now.getFullYear();
+      filtered = filtered.filter((c) => {
+        if (!c.created_at) return false;
+        const createdDate = new Date(c.created_at);
+        return createdDate.getMonth() === currentMonth && createdDate.getFullYear() === currentYear;
+      });
+    }
+    
+    // Filtro por estado usando el mismo criterio que el resumen
+    if (statusFilter !== 'all') {
+      filtered = filtered.filter((c) => normaliseStatus(c.status).kind === statusFilter);
+    }
     
     return filtered;
-  }, [comisiones, filterRut, filterAsesor, filterPrograma]);
+  }, [comisiones, filterRut, filterAsesor, filterPrograma, filterFechaDesde, filterFechaHasta, statusFilter, currentMonthOnly]);
+
+  const activeFilterLabel = useMemo(() => {
+    const parts = [];
+    if (filterRut) parts.push(`RUT ${filterRut}`);
+    if (filterAsesor) parts.push(`Asesor ${filterAsesor}`);
+    if (filterPrograma) parts.push(`Programa ${filterPrograma}`);
+    if (filterFechaDesde) parts.push(`Desde ${formatDateLabel(filterFechaDesde)}`);
+    if (filterFechaHasta) parts.push(`Hasta ${formatDateLabel(filterFechaHasta)}`);
+    if (currentMonthOnly) parts.push('Mes actual');
+    if (statusFilter !== 'all') parts.push(STATUS_FILTER_LABELS[statusFilter] || statusFilter);
+    if (!parts.length) return STATUS_FILTER_LABELS.all;
+    return parts.join(' · ');
+  }, [filterRut, filterAsesor, filterPrograma, filterFechaDesde, filterFechaHasta, currentMonthOnly, statusFilter]);
+
+  const filteredExportCount = comisionesFiltradas.length;
+
+  const handleAdminDownload = useCallback(() => {
+    if (!comisionesFiltradas.length) {
+      window.alert('No hay registros para descargar con los filtros actuales.');
+      return;
+    }
+    setIsExportingCsv(true);
+    try {
+      const csv = buildCsvFromRecords(comisionesFiltradas);
+      const labelSlug = slugify(activeFilterLabel || 'filtro-admin');
+      const timestamp = new Date().toISOString().split('T')[0];
+      const filename = `admin-comisiones-${labelSlug}-${timestamp}.csv`;
+      const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.setAttribute('download', filename);
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(url);
+    } finally {
+      setIsExportingCsv(false);
+    }
+  }, [comisionesFiltradas, activeFilterLabel]);
 
   const filteredEntries = useMemo(() => {
     const entries = featuredEntries;
@@ -291,22 +457,45 @@ function AdminDashboard () {
       });
   }, [featuredEntries, filter, query]);
 
-  if (loading) {
-    return <div className="rounded border border-dashed border-slate-300 p-8 text-center text-slate-500">Cargando información global...</div>;
-  }
-
   if (error) {
-    return <div className="rounded border border-rose-200 bg-rose-50 p-4 text-rose-700">{error}</div>;
+    return (
+      <>
+        {showSplash ? (
+          <LoadingScreen
+            isReady={splashReady}
+            onComplete={() => setShowSplash(false)}
+          />
+        ) : null}
+        <div className="rounded border border-rose-200 bg-rose-50 p-4 text-rose-700">{error}</div>
+      </>
+    );
   }
 
   if (!snapshot) {
-    return null;
+    return (
+      <>
+        {showSplash ? (
+          <LoadingScreen
+            isReady={splashReady}
+            onComplete={() => setShowSplash(false)}
+          />
+        ) : (
+          <div className="rounded border border-dashed border-slate-300 p-8 text-center text-slate-500">Cargando información global...</div>
+        )}
+      </>
+    );
   }
 
   const totalEntries = featuredEntries.length;
 
   return (
     <>
+      {showSplash ? (
+        <LoadingScreen
+          isReady={splashReady}
+          onComplete={() => setShowSplash(false)}
+        />
+      ) : null}
       <div className="space-y-8">
       <section className="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-slate-100">
         <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
@@ -328,27 +517,96 @@ function AdminDashboard () {
             + Agregar registro
           </button>
         </div>
-        <div className="mt-6 grid gap-4 md:grid-cols-4">
-          <SummaryCard label="Total entradas" value={summary.totalEntradas} helper="Registros de estudiantes" icon="👥" />
-          <SummaryCard label="Pagados" value={summary.totalActivos} helper="En seguimiento" accent="bg-emerald-50 text-emerald-600" icon="📈" />
-          <SummaryCard label="Pendientes" value={summary.totalPendientes} helper="Esperando gestión" accent="bg-amber-50 text-amber-600" icon="⏳" />
-          <SummaryCard label="Observados" value={summary.totalExpirados} helper="Casos objetados" accent="bg-slate-50 text-slate-600" icon="🛑" />
+        <div className="mt-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
+          <SummaryCard
+            label="Total entradas"
+            value={summary.totalEntradas}
+            helper="Registros de estudiantes"
+            icon="👥"
+            amountLabel={formatCurrency(summary.totalAmount)}
+            active={statusFilter === 'all' && !currentMonthOnly}
+            onClick={() => { setStatusFilter('all'); setCurrentMonthOnly(false); setCurrentPage(1); }}
+          />
+          <SummaryCard
+            label="Mes actual"
+            value={summary.totalMesActual}
+            helper="Registros del mes en curso"
+            icon="📅"
+            amountLabel={formatCurrency(summary.monthAmount)}
+            active={currentMonthOnly}
+            onClick={() => {
+              const next = !currentMonthOnly;
+              setCurrentMonthOnly(next);
+              if (next) {
+                setStatusFilter('all');
+              }
+              setCurrentPage(1);
+            }}
+          />
+          <SummaryCard
+            label="Pagados"
+            value={summary.totalActivos}
+            helper="En seguimiento"
+            accent="bg-emerald-50 text-emerald-600"
+            icon="📈"
+            amountLabel={formatCurrency(summary.totalActivosAmount)}
+            active={statusFilter === 'active'}
+            onClick={() => { setStatusFilter('active'); setCurrentMonthOnly(false); setCurrentPage(1); }}
+          />
+          <SummaryCard
+            label="Pendientes"
+            value={summary.totalPendientes}
+            helper="Esperando gestión"
+            accent="bg-amber-50 text-amber-600"
+            icon="⏳"
+            amountLabel={formatCurrency(summary.totalPendientesAmount)}
+            active={statusFilter === 'pending'}
+            onClick={() => { setStatusFilter('pending'); setCurrentMonthOnly(false); setCurrentPage(1); }}
+          />
+          <SummaryCard
+            label="Rechazados"
+            value={summary.totalExpirados}
+            helper="Casos rechazados"
+            accent="bg-slate-50 text-slate-600"
+            icon="🛑"
+            amountLabel={formatCurrency(summary.totalExpiradosAmount)}
+            active={statusFilter === 'expired'}
+            onClick={() => { setStatusFilter('expired'); setCurrentMonthOnly(false); setCurrentPage(1); }}
+          />
         </div>
       </section>
 
       {/* Tabla de todas las comisiones */}
       <section className="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-slate-100">
-        <h2 className="mb-4 text-xl font-semibold text-slate-900">
-          Todas las comisiones ({comisionesFiltradas.length})
-          {(filterRut || filterAsesor || filterPrograma) && (
-            <span className="ml-2 text-sm font-normal text-slate-500">
-              (filtrado de {comisiones.length} total)
-            </span>
-          )}
-        </h2>
+        <div className="mb-4 space-y-3">
+          <h2 className="text-xl font-semibold text-slate-900">
+            Todas las comisiones ({comisionesFiltradas.length})
+            {(filterRut || filterAsesor || filterPrograma || filterFechaDesde || filterFechaHasta || currentMonthOnly) && (
+              <span className="ml-2 text-sm font-normal text-slate-500">
+                (filtrado de {comisiones.length} total)
+              </span>
+            )}
+          </h2>
+          <div className="flex flex-col gap-3 rounded-2xl border border-slate-200 bg-slate-50/70 p-4 md:flex-row md:items-center md:justify-between">
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Filtro activo</p>
+              <p className="text-lg font-semibold text-slate-900">{activeFilterLabel}</p>
+              <p className="text-xs text-slate-500">{filteredExportCount} registros listos para exportar</p>
+            </div>
+            <button
+              type="button"
+              onClick={handleAdminDownload}
+              disabled={isExportingCsv || !filteredExportCount}
+              className="inline-flex items-center justify-center gap-2 rounded-full bg-emerald-600 px-5 py-2 text-sm font-semibold text-white transition hover:bg-emerald-500 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {isExportingCsv ? 'Generando CSV...' : `Descargar ${activeFilterLabel}`}
+              <span className="text-xs font-normal text-white/80">({filteredExportCount})</span>
+            </button>
+          </div>
+        </div>
         
         {/* Filtros */}
-        <div className="mb-4 grid gap-3 md:grid-cols-4">
+        <div className="mb-4 grid gap-3 md:grid-cols-4 lg:grid-cols-5">
           <div className="relative">
             <label className="mb-1 block text-xs font-medium text-slate-500">Filtrar por RUT</label>
             <input
@@ -385,12 +643,53 @@ function AdminDashboard () {
               ))}
             </select>
           </div>
-          <div className="flex items-end">
-            {(filterRut || filterAsesor || filterPrograma) && (
+          <div className="relative">
+            <label className="mb-1 block text-xs font-medium text-slate-500">Rango de fechas</label>
+            <div className="flex items-center gap-2">
+              <input
+                type="date"
+                value={tempFechaDesde}
+                onChange={(e) => { setTempFechaDesde(e.target.value); }}
+                className="flex-1 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-200"
+              />
+              <span className="self-center text-xs text-slate-400">a</span>
+              <input
+                type="date"
+                value={tempFechaHasta}
+                onChange={(e) => { setTempFechaHasta(e.target.value); }}
+                className="flex-1 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-200"
+              />
+            </div>
+          </div>
+          <div className="flex items-end justify-end gap-2">
+            {hasPendingDateChange && (
               <button
                 type="button"
-                onClick={() => { setFilterRut(''); setFilterAsesor(''); setFilterPrograma(''); setCurrentPage(1); }}
-                className="w-full rounded-lg border border-slate-300 bg-slate-50 px-3 py-2 text-sm font-medium text-slate-600 transition hover:bg-slate-100"
+                onClick={() => {
+                  setFilterFechaDesde(tempFechaDesde || '');
+                  setFilterFechaHasta(tempFechaHasta || '');
+                  setCurrentPage(1);
+                }}
+                className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-indigo-500"
+              >
+                Aplicar
+              </button>
+            )}
+            {!hasPendingDateChange && hasAnyFilter && (
+              <button
+                type="button"
+                onClick={() => {
+                  setFilterRut('');
+                  setFilterAsesor('');
+                  setFilterPrograma('');
+                  setFilterFechaDesde('');
+                  setFilterFechaHasta('');
+                  setTempFechaDesde('');
+                  setTempFechaHasta('');
+                  setCurrentMonthOnly(false);
+                  setCurrentPage(1);
+                }}
+                className="text-xs font-medium text-slate-500 underline-offset-2 hover:text-slate-700 hover:underline"
               >
                 Limpiar filtros
               </button>
@@ -420,7 +719,7 @@ function AdminDashboard () {
                   <td className="px-4 py-2 text-sm">{r.category}</td>
                   <td className="px-4 py-2 text-sm">{Number(r.amount).toLocaleString('es-CL', { style: 'currency', currency: 'CLP' })}</td>
                   <td className="px-4 py-2 text-sm">
-                    <span className={`inline-block rounded-full px-2 py-0.5 text-xs font-semibold ${r.status?.toLowerCase() === 'pagado' ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'}`}>
+                    <span className={`inline-block rounded-full px-2 py-0.5 text-xs font-semibold ${getStatusStyles(r.status).className}`}>
                       {r.status}
                     </span>
                   </td>
@@ -430,11 +729,18 @@ function AdminDashboard () {
                     <button
                       type="button"
                       onClick={() => {
+                        const estudiantes = snapshot?.tables?.estudiantes || [];
+                        const estudiante = estudiantes.find((e) => e.rut === r.rut_estudiante);
+                        const nombresDesdeEstudiante = estudiante?.nombres || '';
+                        const apellidosDesdeEstudiante = estudiante?.apellidos || '';
+
                         setEditingEntry({
                           comision_id: r.id,
                           rut: r.rut_estudiante,
-                          nombres: r.title?.split(' ').slice(0, -2).join(' ') || '',
-                          apellidos: r.title?.split(' ').slice(-2).join(' ') || '',
+                          nombres: nombresDesdeEstudiante || r.title?.split(' ').slice(0, -2).join(' ') || '',
+                          apellidos: apellidosDesdeEstudiante || r.title?.split(' ').slice(-2).join(' ') || '',
+                          correo: estudiante?.correo || '',
+                          telefono: estudiante?.telefono || '',
                           cod_programa: r.cod_programa,
                           programa_nombre: r.category,
                           asesor_nombre: r.asesor,
@@ -456,7 +762,9 @@ function AdminDashboard () {
               {!comisionesFiltradas.length && (
                 <tr>
                   <td colSpan="8" className="px-4 py-6 text-center text-sm text-slate-500">
-                    {(filterRut || filterAsesor || filterPrograma) ? 'No se encontraron registros con los filtros aplicados' : 'Sin registros'}
+                    {(filterRut || filterAsesor || filterPrograma || filterFechaDesde || filterFechaHasta || currentMonthOnly)
+                      ? 'No se encontraron registros con los filtros aplicados'
+                      : 'Sin registros'}
                   </td>
                 </tr>
               )}
@@ -577,7 +885,7 @@ function AdminDashboard () {
                       )}
                       {asesor.observados > 0 && (
                         <span className="rounded-full bg-rose-100 px-3 py-1 font-medium text-rose-700">
-                          ⚠ {asesor.observados} observados
+                          ⚠ {asesor.observados} rechazados
                         </span>
                       )}
                     </div>
@@ -610,11 +918,7 @@ function AdminDashboard () {
                               <td className="px-3 py-2 text-slate-600">{caso.category}</td>
                               <td className="px-3 py-2">{Number(caso.amount).toLocaleString('es-CL', { style: 'currency', currency: 'CLP' })}</td>
                               <td className="px-3 py-2">
-                                <span className={`inline-block rounded-full px-2 py-0.5 text-xs font-semibold ${
-                                  caso.status?.toLowerCase() === 'pagado' ? 'bg-emerald-100 text-emerald-700' : 
-                                  caso.status?.toLowerCase().includes('pendiente') ? 'bg-amber-100 text-amber-700' : 
-                                  'bg-slate-100 text-slate-700'
-                                }`}>
+                                <span className={`inline-block rounded-full px-2 py-0.5 text-xs font-semibold ${getStatusStyles(caso.status).className}`}>
                                   {caso.status}
                                 </span>
                               </td>
@@ -644,20 +948,29 @@ function AdminDashboard () {
           onCreate={handleCreateStudent}
           onUpdate={handleUpdateStudent}
           programs={snapshot.tables.programas || []}
-          advisors={snapshot.tables.asesores || []}
+          advisors={advisorsWithComision}
         />
       </>
   );
 }
 
-function SummaryCard ({ label, value, helper, accent = 'bg-slate-100 text-slate-800', icon = '📊' }) {
+function SummaryCard ({ label, value, helper, accent = 'bg-slate-100 text-slate-800', icon = '📊', active = false, onClick, amountLabel }) {
   return (
-    <div className="flex flex-col gap-2 rounded-2xl border border-slate-100 bg-white p-4 shadow-sm">
-      <div className={`inline-flex h-10 w-10 items-center justify-center rounded-full text-xl ${accent}`}>{icon}</div>
+    <button
+      type="button"
+      onClick={onClick}
+      className={`flex flex-col gap-2 rounded-2xl border p-3 sm:p-4 text-left shadow-sm transition
+        ${active ? 'border-indigo-300 ring-2 ring-indigo-200 bg-indigo-50/40' : 'border-slate-100 bg-white hover:bg-slate-50'}
+      `}
+    >
+      <div className="flex items-center justify-between gap-3">
+        <div className={`inline-flex h-9 w-9 items-center justify-center rounded-full text-lg sm:h-10 sm:w-10 sm:text-xl ${accent}`}>{icon}</div>
+        {amountLabel ? <p className="text-xs font-semibold text-slate-500 whitespace-nowrap">{amountLabel}</p> : null}
+      </div>
       <p className="text-sm text-slate-500">{label}</p>
-      <p className="text-3xl font-semibold text-slate-900">{value}</p>
+      <p className="text-2xl sm:text-3xl font-semibold text-slate-900">{value}</p>
       {helper ? <p className="text-xs text-slate-400">{helper}</p> : null}
-    </div>
+    </button>
   );
 }
 
@@ -774,6 +1087,16 @@ function StudentDialog ({ open, onClose, onCreate, onUpdate, mode, entry, progra
     }
 
     if (mode === 'edit' && entry) {
+      let initialAsesorId = '';
+      if (entry.asesor_id) {
+        initialAsesorId = String(entry.asesor_id);
+      } else if (entry.asesor_nombre) {
+        const matchedAdvisor = advisors.find((advisor) => advisor.nombre_completo === entry.asesor_nombre);
+        if (matchedAdvisor) {
+          initialAsesorId = String(matchedAdvisor.id);
+        }
+      }
+
       setForm({
         rut: entry.rut || '',
         nombres: entry.nombres || '',
@@ -783,7 +1106,7 @@ function StudentDialog ({ open, onClose, onCreate, onUpdate, mode, entry, progra
         codPrograma: entry.cod_programa || '',
         nombrePrograma: entry.programa_nombre || entry.nombrePrograma || '',
         centroCostos: entry.centro_costos || '',
-        asesorId: entry.asesor_id ? String(entry.asesor_id) : '',
+        asesorId: initialAsesorId,
         estadoPago: entry.estado_pago || '',
         fechaMatricula: entry.fecha_matricula ? new Date(entry.fecha_matricula).toISOString().split('T')[0] : '',
         sede: entry.sede || '',
@@ -796,15 +1119,21 @@ function StudentDialog ({ open, onClose, onCreate, onUpdate, mode, entry, progra
     }
     setSubmitting(false);
     setError(null);
-  }, [open, mode, entry]);
+  }, [open, mode, entry, advisors]);
 
   if (!open) return null;
 
   const handleChange = (event) => {
     const { name, value } = event.target;
-    const nextValue = name === 'rut'
-      ? value.replace(/[.\-]/g, '').toUpperCase()
-      : value;
+    let nextValue = value;
+
+    if (name === 'rut') {
+      nextValue = value.replace(/[.\-]/g, '').toUpperCase();
+    } else if (name === 'valorComision' || name === 'matricula') {
+      // Solo permitir dígitos para montos enteros
+      nextValue = value.replace(/[^0-9]/g, '');
+    }
+
     setForm((prev) => ({ ...prev, [name]: nextValue }));
   };
 
@@ -830,6 +1159,7 @@ function StudentDialog ({ open, onClose, onCreate, onUpdate, mode, entry, progra
     setSubmitting(true);
     try {
       const cleanRut = form.rut.replace(/[.\-]/g, '').toUpperCase();
+      const versionProgramaValue = form.versionPrograma != null ? String(form.versionPrograma) : '';
       const payload = {
         ...form,
         rut: cleanRut.trim(),
@@ -844,9 +1174,9 @@ function StudentDialog ({ open, onClose, onCreate, onUpdate, mode, entry, progra
         estadoPago: form.estadoPago.trim() || undefined,
         fechaMatricula: form.fechaMatricula || undefined,
         sede: form.sede.trim() || undefined,
-        valorComision: form.valorComision !== '' ? Number(form.valorComision) : undefined,
-        matricula: form.matricula !== '' ? Number(form.matricula) : undefined,
-        versionPrograma: form.versionPrograma.trim() || undefined
+        valorComision: form.valorComision !== '' ? parseInt(form.valorComision, 10) : undefined,
+        matricula: form.matricula !== '' ? parseInt(form.matricula, 10) : undefined,
+        versionPrograma: versionProgramaValue.trim() || undefined
       };
 
       if (isEditMode && entry?.comision_id) {
@@ -897,14 +1227,20 @@ function StudentDialog ({ open, onClose, onCreate, onUpdate, mode, entry, progra
             </label>
             <label className="text-sm text-slate-600">
               Estado de pago
-              <input
+              <select
                 name="estadoPago"
                 value={form.estadoPago}
                 onChange={handleChange}
                 className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-slate-800 focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-100"
-                placeholder="Pagado, Pendiente, etc."
-                maxLength={30}
-              />
+              >
+                <option value="">Seleccionar estado de pago</option>
+                <option value="Aprobado">Aprobado</option>
+                <option value="Toku">Toku</option>
+                <option value="Rechazado">Rechazado</option>
+                <option value="Webpay">Webpay</option>
+                <option value="Pagado">Pagado</option>
+                <option value="Pendiente de pago">Pendiente de pago</option>
+              </select>
             </label>
           </div>
 
@@ -921,25 +1257,37 @@ function StudentDialog ({ open, onClose, onCreate, onUpdate, mode, entry, progra
             </label>
             <label className="text-sm text-slate-600">
               Sede
-              <input
+              <select
                 name="sede"
                 value={form.sede}
                 onChange={handleChange}
                 className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-slate-800 focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-100"
-                placeholder="Santiago, Online, etc."
-                maxLength={60}
-              />
+              >
+                
+                <option value="Santiago">Santiago</option>
+                <option value="Temuco">Temuco</option>
+                <option value="Online">Online</option>
+              </select>
             </label>
             <label className="text-sm text-slate-600">
               Versión programa
-              <input
+              <select
                 name="versionPrograma"
                 value={form.versionPrograma}
                 onChange={handleChange}
                 className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-slate-800 focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-100"
-                placeholder="Opcional"
-                maxLength={30}
-              />
+              >
+                <option value="1">1</option>
+                <option value="2">2</option>
+                <option value="3">3</option>
+                <option value="4">4</option>
+                <option value="5">5</option>
+                <option value="6">6</option>
+                <option value="7">7</option>
+                <option value="8">8</option>
+                <option value="9">9</option>
+                <option value="10">10</option>
+              </select>
             </label>
           </div>
 
@@ -948,9 +1296,9 @@ function StudentDialog ({ open, onClose, onCreate, onUpdate, mode, entry, progra
               Valor comisión
               <input
                 name="valorComision"
-                type="number"
-                min="0"
-                step="0.01"
+                type="text"
+                inputMode="numeric"
+                pattern="[0-9]*"
                 value={form.valorComision}
                 onChange={handleChange}
                 className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-slate-800 focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-100"
@@ -961,9 +1309,9 @@ function StudentDialog ({ open, onClose, onCreate, onUpdate, mode, entry, progra
               Matrícula
               <input
                 name="matricula"
-                type="number"
-                min="0"
-                step="0.01"
+                type="text"
+                inputMode="numeric"
+                pattern="[0-9]*"
                 value={form.matricula}
                 onChange={handleChange}
                 className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-slate-800 focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-100"
@@ -1027,12 +1375,13 @@ function StudentDialog ({ open, onClose, onCreate, onUpdate, mode, entry, progra
 
           <div className="grid gap-4 md:grid-cols-2">
             <label className="text-sm text-slate-600">
-              Correo
+              Correo *
               <input
                 name="correo"
                 type="email"
                 value={form.correo}
                 onChange={handleChange}
+                required
                 className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-slate-800 focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-100"
                 placeholder="correo@dominio.cl"
               />
@@ -1086,8 +1435,8 @@ function StudentDialog ({ open, onClose, onCreate, onUpdate, mode, entry, progra
               <input
                 name="nombrePrograma"
                 value={form.nombrePrograma}
-                onChange={handleChange}
-                className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-slate-800 focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-100"
+                readOnly
+                className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-slate-800 bg-slate-50 cursor-not-allowed focus:outline-none"
                 placeholder="MBA Gestión"
                 maxLength={120}
                 required

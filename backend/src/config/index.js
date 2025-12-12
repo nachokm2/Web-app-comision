@@ -10,7 +10,15 @@ const config = {
   sessionTtlMinutes: Number(process.env.SESSION_TTL_MINUTES || 60),
   logLevel: process.env.LOG_LEVEL || 'info',
   // Importante: '*' no funciona con credentials=true. Por defecto, frontend local.
-  allowedOrigin: process.env.ALLOWED_ORIGIN || 'http://localhost:5173'
+  allowedOrigin: process.env.ALLOWED_ORIGIN || 'http://localhost:5173',
+  appBaseUrl: process.env.APP_BASE_URL || 'http://localhost:5173',
+  smtpHost: process.env.SMTP_HOST || '',
+  smtpPort: Number(process.env.SMTP_PORT || 587),
+  smtpSecure: process.env.SMTP_SECURE === 'true',
+  smtpUser: process.env.SMTP_USER || '',
+  smtpPassword: process.env.SMTP_PASSWORD || '',
+  emailFrom: process.env.EMAIL_FROM || 'no-reply@uautonoma.cl',
+  passwordResetTokenTtlMinutes: Number(process.env.PASSWORD_RESET_TOKEN_TTL_MINUTES || 30)
 };
 
 if (!config.databaseUrl) {
