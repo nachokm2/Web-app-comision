@@ -9,6 +9,7 @@ const router = Router();
 router.use(requireAuth, requireRole('admin'));
 router.get('/schema', getSchemaSnapshot);
 router.get('/comisiones', listAllComisiones);
+router.get('/comisiones?asesor=')
 router.post(
 	'/students',
 	[

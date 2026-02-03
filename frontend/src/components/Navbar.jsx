@@ -13,7 +13,7 @@ function Navbar () {
           className="h-12 w-12 rounded-lg border border-slate-200 object-cover shadow-sm"
         />
         <div>
-          <p className="text-lg font-semibold text-slate-800">Panel Personalizado</p>
+          <p className="text-lg font-semibold text-slate-800">Administración</p>
           <p className="text-sm text-slate-500">Universidad Autónoma · DUC IN ALTUM</p>
         </div>
       </div>

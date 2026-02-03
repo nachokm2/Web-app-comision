@@ -123,6 +123,13 @@ function AdminDashboard () {
 
   const hasPendingDateChange = tempFechaDesde !== filterFechaDesde || tempFechaHasta !== filterFechaHasta;
 
+  useEffect(()=> {
+    if(filterAsesor.length > 2){
+      fetch(`/api/`)
+    }
+  }, [])
+
+
   const loadSnapshot = useCallback(async () => {
     try {
       setLoading(true);
@@ -394,18 +401,18 @@ function AdminDashboard () {
     return filtered;
   }, [comisiones, filterRut, filterAsesor, filterPrograma, filterFechaDesde, filterFechaHasta, statusFilter, currentMonthOnly]);
 
-  const activeFilterLabel = useMemo(() => {
-    const parts = [];
-    if (filterRut) parts.push(`RUT ${filterRut}`);
-    if (filterAsesor) parts.push(`Asesor ${filterAsesor}`);
-    if (filterPrograma) parts.push(`Programa ${filterPrograma}`);
-    if (filterFechaDesde) parts.push(`Desde ${formatDateLabel(filterFechaDesde)}`);
-    if (filterFechaHasta) parts.push(`Hasta ${formatDateLabel(filterFechaHasta)}`);
-    if (currentMonthOnly) parts.push('Mes actual');
-    if (statusFilter !== 'all') parts.push(STATUS_FILTER_LABELS[statusFilter] || statusFilter);
-    if (!parts.length) return STATUS_FILTER_LABELS.all;
-    return parts.join(' · ');
-  }, [filterRut, filterAsesor, filterPrograma, filterFechaDesde, filterFechaHasta, currentMonthOnly, statusFilter]);
+  // const activeFilterLabel = useMemo(() => {
+  //   const parts = [];
+  //   if (filterRut) parts.push(`RUT ${filterRut}`);
+  //   if (filterAsesor) parts.push(`Asesor ${filterAsesor}`);
+  //   if (filterPrograma) parts.push(`Programa ${filterPrograma}`);
+  //   if (filterFechaDesde) parts.push(`Desde ${formatDateLabel(filterFechaDesde)}`);
+  //   if (filterFechaHasta) parts.push(`Hasta ${formatDateLabel(filterFechaHasta)}`);
+  //   if (currentMonthOnly) parts.push('Mes actual');
+  //   if (statusFilter !== 'all') parts.push(STATUS_FILTER_LABELS[statusFilter] || statusFilter);
+  //   if (!parts.length) return STATUS_FILTER_LABELS.all;
+  //   return parts.join(' · ');
+  // }, [filterRut, filterAsesor, filterPrograma, filterFechaDesde, filterFechaHasta, currentMonthOnly, statusFilter]);
 
   const filteredExportCount = comisionesFiltradas.length;
 
@@ -417,7 +424,7 @@ function AdminDashboard () {
     setIsExportingCsv(true);
     try {
       const csv = buildCsvFromRecords(comisionesFiltradas);
-      const labelSlug = slugify(activeFilterLabel || 'filtro-admin');
+      // const labelSlug = slugify(activeFilterLabel || 'filtro-admin');
       const timestamp = new Date().toISOString().split('T')[0];
       const filename = `admin-comisiones-${labelSlug}-${timestamp}.csv`;
       const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
@@ -432,7 +439,7 @@ function AdminDashboard () {
     } finally {
       setIsExportingCsv(false);
     }
-  }, [comisionesFiltradas, activeFilterLabel]);
+  }, [comisionesFiltradas]);
 
   const filteredEntries = useMemo(() => {
     const entries = featuredEntries;
@@ -507,7 +514,7 @@ function AdminDashboard () {
             <p className="text-sm font-semibold uppercase tracking-wide text-indigo-500">Panel administrativo</p>
             <h1 className="mt-1 text-3xl font-semibold text-slate-900">Gestión integral de comisiones</h1>
             <p className="mt-2 max-w-3xl text-base text-slate-500">
-              Monitorea en un solo lugar los casos asignados, el estado de pago y los registros del esquema <span className="font-semibold text-slate-700">comision_ua</span>.
+              Monitorea en un solo lugar los casos asignados, el estado de pago y los registros históricos relacionados al pago de comisiones:
             </p>
           </div>
           <button
@@ -589,8 +596,8 @@ function AdminDashboard () {
           </h2>
           <div className="flex flex-col gap-3 rounded-2xl border border-slate-200 bg-slate-50/70 p-4 md:flex-row md:items-center md:justify-between">
             <div>
-              <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Filtro activo</p>
-              <p className="text-lg font-semibold text-slate-900">{activeFilterLabel}</p>
+              <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">{hasAnyFilter ? 'Filtro activo': 'Sin filtros aplicados'}</p>
+              {/* <p className="text-lg font-semibold text-slate-900">{activeFilterLabel}</p> */}
               <p className="text-xs text-slate-500">{filteredExportCount} registros listos para exportar</p>
             </div>
             <button
@@ -599,7 +606,7 @@ function AdminDashboard () {
               disabled={isExportingCsv || !filteredExportCount}
               className="inline-flex items-center justify-center gap-2 rounded-full bg-emerald-600 px-5 py-2 text-sm font-semibold text-white transition hover:bg-emerald-500 disabled:cursor-not-allowed disabled:opacity-60"
             >
-              {isExportingCsv ? 'Generando CSV...' : `Descargar ${activeFilterLabel}`}
+              {isExportingCsv ? 'Generando CSV...' : `Descargar con filtros`}
               <span className="text-xs font-normal text-white/80">({filteredExportCount})</span>
             </button>
           </div>
@@ -629,6 +636,16 @@ function AdminDashboard () {
                 <option key={asesor} value={asesor}>{asesor}</option>
               ))}
             </select>
+            {/* <input 
+              className={`border p-2 w-full rounded-lg text-sm ${!filterAsesor && query ? 'border-red-500' : 'border-gray-300'}`}
+              value={query}
+              type='text'
+              onChange={(e) => {
+                setQuery(e.target.value)
+                setFilterAsesor(null)
+              }}
+              placeholder='Buscar por asesor...'
+              /> */}
           </div>
           <div className="relative">
             <label className="mb-1 block text-xs font-medium text-slate-500">Filtrar por Programa</label>
