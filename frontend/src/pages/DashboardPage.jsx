@@ -3,6 +3,7 @@ import Navbar from '../components/Navbar.jsx';
 import DataTable from '../components/DataTable.jsx';
 import AdminDashboard from '../components/AdminDashboard.jsx';
 import LoadingScreen from '../components/LoadingScreen.jsx';
+import PaymentTrendChart from '../components/PaymentTrendChart.jsx';
 import { useAuth } from '../context/AuthContext.jsx';
 import { createRecord, deleteRecord, fetchRecords, updateRecord, fetchProgramsCatalog, uploadBulkRecords } from '../services/api.js';
 import { buildCsvFromRecords, slugify } from '../utils/csvExport.js';
@@ -122,6 +123,42 @@ function DashboardPage () {
       pendingAmount,
       rejectedAmount
     };
+  }, [records]);
+
+  const paymentTrendData = useMemo(() => {
+    if (!records.length) return [];
+    const monthFormatter = new Intl.DateTimeFormat('es-CL', { month: 'short', year: 'numeric' });
+    const buckets = new Map();
+
+    records.forEach((record) => {
+      if (!record.created_at) return;
+      const created = new Date(record.created_at);
+      if (Number.isNaN(created.getTime())) return;
+      const key = `${created.getFullYear()}-${String(created.getMonth() + 1).padStart(2, '0')}`;
+      if (!buckets.has(key)) {
+        buckets.set(key, {
+          key,
+          month: monthFormatter.format(created),
+          paid: 0,
+          pending: 0,
+          rejected: 0
+        });
+      }
+
+      const bucket = buckets.get(key);
+      const status = (record.status || '').toLowerCase();
+      if (/pagado|aprobado|paid/.test(status)) {
+        bucket.paid += 1;
+      } else if (/pendiente|espera|pending/.test(status)) {
+        bucket.pending += 1;
+      } else if (/rechazado|observado|rejected|expirado/.test(status)) {
+        bucket.rejected += 1;
+      }
+    });
+
+    return Array.from(buckets.values())
+      .sort((a, b) => a.key.localeCompare(b.key))
+      .slice(-8);
   }, [records]);
 
   const filteredRecords = useMemo(() => {
@@ -250,6 +287,9 @@ function DashboardPage () {
       <Navbar />
       <main className="mx-auto max-w-6xl px-4 py-8 space-y-6">
         {error ? <Alert message={error} onClose={() => setError(null)} /> : null}
+        {paymentTrendData.length > 0 ? (
+          <PaymentTrendChart data={paymentTrendData} />
+        ) : null}
         <section className="space-y-4">
           <div className="flex flex-col gap-3 rounded-2xl border border-slate-200 bg-white p-4 md:flex-row md:items-center md:justify-between">
             <div>
