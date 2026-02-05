@@ -16,6 +16,8 @@ const currencyFormatter = new Intl.NumberFormat('es-CL', {
   maximumFractionDigits: 0
 });
 
+const BULK_PREVIEW_PAGE_SIZE = 12;
+
 function formatCurrency (value = 0) {
   return currencyFormatter.format(Math.max(0, Number(value) || 0));
 }
@@ -482,6 +484,7 @@ function BulkUploadModal ({ open, onClose, onUploaded }) {
   const [programs, setPrograms] = useState([]);
   const [loadingPrograms, setLoadingPrograms] = useState(false);
   const [catalogError, setCatalogError] = useState(null);
+  const [currentPage, setCurrentPage] = useState(0);
 
   useEffect(() => {
     if (!open) {
@@ -490,6 +493,7 @@ function BulkUploadModal ({ open, onClose, onUploaded }) {
       setError(null);
       setSummary(null);
       setCatalogError(null);
+      setCurrentPage(0);
       return;
     }
 
@@ -524,6 +528,32 @@ function BulkUploadModal ({ open, onClose, onUploaded }) {
 
   const templateUrl = '/templates/carga_masiva_comisiones.csv';
   const programIndex = useMemo(() => buildProgramIndex(programs), [programs]);
+  const sortedRows = useMemo(() => {
+    const priorityMap = { 'needs-review': 0, pending: 1, valid: 2 };
+    return [...rows].sort((a, b) => {
+      const priorityA = priorityMap[a.status] ?? 3;
+      const priorityB = priorityMap[b.status] ?? 3;
+      if (priorityA !== priorityB) {
+        return priorityA - priorityB;
+      }
+      return (a.rowNumber || 0) - (b.rowNumber || 0);
+    });
+  }, [rows]);
+  const totalPages = Math.max(1, Math.ceil(sortedRows.length / BULK_PREVIEW_PAGE_SIZE));
+  const safePage = Math.min(currentPage, totalPages - 1);
+  const paginatedRows = sortedRows.slice(
+    safePage * BULK_PREVIEW_PAGE_SIZE,
+    safePage * BULK_PREVIEW_PAGE_SIZE + BULK_PREVIEW_PAGE_SIZE
+  );
+  const pageStart = sortedRows.length ? safePage * BULK_PREVIEW_PAGE_SIZE + 1 : 0;
+  const pageEnd = sortedRows.length ? pageStart + paginatedRows.length - 1 : 0;
+
+  useEffect(() => {
+    setCurrentPage((prev) => {
+      const maxPage = Math.max(0, Math.ceil(sortedRows.length / BULK_PREVIEW_PAGE_SIZE) - 1);
+      return Math.min(prev, maxPage);
+    });
+  }, [sortedRows.length]);
 
   if (!open) return null;
 
@@ -538,6 +568,7 @@ function BulkUploadModal ({ open, onClose, onUploaded }) {
     setRows([]);
     setSummary(null);
     setError(null);
+    setCurrentPage(0);
   };
 
   const handleFileSelection = async (file) => {
@@ -585,10 +616,12 @@ function BulkUploadModal ({ open, onClose, onUploaded }) {
       const evaluated = filteredRecords.map((row) => evaluateUploadRow(row, programIndex));
       setRows(evaluated);
       setSelectedFile(file);
+      setCurrentPage(0);
     } catch (err) {
       setError(err.message || 'No pudimos leer el archivo seleccionado.');
       setRows([]);
       setSelectedFile(null);
+      setCurrentPage(0);
     } finally {
       setParsing(false);
     }
@@ -870,7 +903,7 @@ function BulkUploadModal ({ open, onClose, onUploaded }) {
                 </tr>
               </thead>
               <tbody>
-                {rows.length === 0 && (
+                {sortedRows.length === 0 && (
                   <tr>
                     <td colSpan="5" className="px-4 py-8 text-center text-sm text-slate-400">
                       Carga un archivo para comenzar la revisión.
@@ -878,7 +911,7 @@ function BulkUploadModal ({ open, onClose, onUploaded }) {
                   </tr>
                 )}
 
-                {rows.map((row) => (
+                {paginatedRows.map((row) => (
                   <tr key={row.id} className="border-t border-slate-100">
                     <td className="px-4 py-3 font-mono text-xs text-slate-500">#{row.rowNumber}</td>
                     <td className="px-4 py-3">
@@ -937,6 +970,34 @@ function BulkUploadModal ({ open, onClose, onUploaded }) {
               </tbody>
             </table>
           </div>
+          {sortedRows.length > BULK_PREVIEW_PAGE_SIZE ? (
+            <div className="flex flex-col items-center gap-2 border-t border-slate-100 px-4 py-3 text-xs text-slate-500 sm:flex-row sm:justify-between">
+              <span>
+                Mostrando {pageStart}-{pageEnd} de {sortedRows.length} filas
+              </span>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setCurrentPage((prev) => Math.max(prev - 1, 0))}
+                  disabled={safePage === 0}
+                  className="rounded-full border border-slate-200 px-3 py-1 text-slate-600 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  ← Anterior
+                </button>
+                <span className="text-[11px] text-slate-400">
+                  Página {safePage + 1} de {totalPages}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setCurrentPage((prev) => Math.min(prev + 1, totalPages - 1))}
+                  disabled={safePage >= totalPages - 1}
+                  className="rounded-full border border-slate-200 px-3 py-1 text-slate-600 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  Siguiente →
+                </button>
+              </div>
+            </div>
+          ) : null}
         </div>
       </div>
     </div>
