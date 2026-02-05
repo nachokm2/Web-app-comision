@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { Navigate } from 'react-router-dom';
 import Papa from 'papaparse';
 import * as XLSX from 'xlsx';
 import Navbar from '../components/Navbar.jsx';
@@ -266,6 +267,11 @@ function DashboardPage () {
     } catch (err) {
       setError(err.message);
     }
+  }
+
+  const normalizedUsername = (user?.username || '').toLowerCase();
+  if (normalizedUsername === 'admin.contable@test.cl') {
+    return <Navigate to="/contable" replace />;
   }
 
   const isAdminView = (user?.rol || user?.role || '').toString().toUpperCase() === 'ADMIN';
