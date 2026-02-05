@@ -55,9 +55,17 @@ export async function fetchRecords () {
 
 export async function fetchProgramsCatalog () {
   try {
-    const { data } = await apiClient.get('/records/programs');
+    const { data } = await apiClient.get('/programas');
     return data.programs;
   } catch (error) {
+    if (error.response?.status === 404) {
+      try {
+        const { data } = await apiClient.get('/records/programs');
+        return data.programs;
+      } catch (fallbackError) {
+        throw parseError(fallbackError);
+      }
+    }
     throw parseError(error);
   }
 }
@@ -97,6 +105,22 @@ export async function uploadBulkRecords (file) {
     });
     return data;
   } catch (error) {
+    throw parseError(error);
+  }
+}
+
+export async function submitManualBulkRecords (rows) {
+  try {
+    const { data } = await apiClient.post('/carga-masiva', { rows });
+    return data;
+  } catch (error) {
+    const responseData = error.response?.data;
+    if (responseData?.issues) {
+      const structuredError = new Error(responseData.message || 'La carga contiene filas con observaciones');
+      structuredError.code = responseData.error;
+      structuredError.issues = responseData.issues;
+      throw structuredError;
+    }
     throw parseError(error);
   }
 }
