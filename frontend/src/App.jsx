@@ -3,6 +3,7 @@ import LoginPage from './pages/LoginPage.jsx';
 import DashboardPage from './pages/DashboardPage.jsx';
 import ForgotPasswordPage from './pages/ForgotPasswordPage.jsx';
 import ResetPasswordPage from './pages/ResetPasswordPage.jsx';
+import AccountingDashboardPage from './pages/AccountingDashboardPage.jsx';
 import ProtectedRoute from './components/ProtectedRoute.jsx';
 
 function App () {
@@ -16,6 +17,14 @@ function App () {
         element={
           <ProtectedRoute>
             <DashboardPage />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/contable"
+        element={
+          <ProtectedRoute>
+            <AccountingDashboardPage />
           </ProtectedRoute>
         }
       />
