@@ -1,2 +1,2 @@
-RUT,Nombres,Apellidos,Correo,Telefono,CodigoPrograma,NombrePrograma,CentroCostos,EstadoPago,FechaMatricula,Sede,Matricula,VersionPrograma,ComentarioAsesor
-12.345.678-9,Genesis,Valdes,genesis@example.cl,+56912345678,COD123,Programa de Marketing,CC-001,Pendiente de pago,2025-01-15,Santiago,350000,1,Comentario opcional para el equipo
+RUT,Nombres,Apellidos,Correo,Telefono,Nombre programa,Fecha Matricula,Sede,Valor Matricula,Valor Arancel,Version Programa,Comentario asesor
+12.345.678-9,Genesis,Valdes,genesis@example.cl,+56912345678,Programa de Marketing,2025-01-15,Santiago,350000,1500000,1,Comentario opcional para el equipo

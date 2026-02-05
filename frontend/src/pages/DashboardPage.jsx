@@ -1,11 +1,13 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import Papa from 'papaparse';
+import * as XLSX from 'xlsx';
 import Navbar from '../components/Navbar.jsx';
 import DataTable from '../components/DataTable.jsx';
 import AdminDashboard from '../components/AdminDashboard.jsx';
 import LoadingScreen from '../components/LoadingScreen.jsx';
 import PaymentTrendChart from '../components/PaymentTrendChart.jsx';
 import { useAuth } from '../context/AuthContext.jsx';
-import { createRecord, deleteRecord, fetchRecords, updateRecord, fetchProgramsCatalog, uploadBulkRecords } from '../services/api.js';
+import { createRecord, deleteRecord, fetchRecords, updateRecord, fetchProgramsCatalog, submitManualBulkRecords } from '../services/api.js';
 import { buildCsvFromRecords, slugify } from '../utils/csvExport.js';
 
 const currencyFormatter = new Intl.NumberFormat('es-CL', {
@@ -470,36 +472,126 @@ function Alert ({ message, onClose }) {
   );
 }
 
-const MAX_BULK_FILE_SIZE = 2 * 1024 * 1024; // 2 MB
-
 function BulkUploadModal ({ open, onClose, onUploaded }) {
   const [selectedFile, setSelectedFile] = useState(null);
-  const [uploading, setUploading] = useState(false);
+  const [rows, setRows] = useState([]);
   const [error, setError] = useState(null);
   const [summary, setSummary] = useState(null);
+  const [uploading, setUploading] = useState(false);
+  const [parsing, setParsing] = useState(false);
+  const [programs, setPrograms] = useState([]);
+  const [loadingPrograms, setLoadingPrograms] = useState(false);
+  const [catalogError, setCatalogError] = useState(null);
 
   useEffect(() => {
     if (!open) {
       setSelectedFile(null);
-      setUploading(false);
+      setRows([]);
       setError(null);
       setSummary(null);
+      setCatalogError(null);
+      return;
     }
+
+    let cancelled = false;
+    setLoadingPrograms(true);
+    setCatalogError(null);
+    fetchProgramsCatalog()
+      .then((list) => {
+        if (cancelled) return;
+        const catalog = Array.isArray(list) ? list : [];
+        setPrograms(catalog);
+        if (catalog.length) {
+          const index = buildProgramIndex(catalog);
+          setRows((prev) => (prev.length ? prev.map((row) => evaluateUploadRow(row, index)) : prev));
+        }
+      })
+      .catch((err) => {
+        if (!cancelled) {
+          setCatalogError(err.message || 'No pudimos obtener el catálogo de programas.');
+        }
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setLoadingPrograms(false);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
   }, [open]);
+
+  const templateUrl = '/templates/carga_masiva_comisiones.csv';
+  const programIndex = useMemo(() => buildProgramIndex(programs), [programs]);
 
   if (!open) return null;
 
-  const handleFileSelection = (file) => {
-    if (!file) return;
-    if (file.size > MAX_BULK_FILE_SIZE) {
-      setError('El archivo supera el límite de 2 MB.');
-      setSelectedFile(null);
-      setSummary(null);
+  const hasRows = rows.length > 0;
+  const pendingReview = rows.some((row) => row.status !== 'valid');
+  const canSubmit = hasRows && !pendingReview && !uploading && !parsing;
+  const validCount = rows.filter((row) => row.status === 'valid').length;
+  const reviewCount = rows.length - validCount;
+
+  const resetCurrentUpload = () => {
+    setSelectedFile(null);
+    setRows([]);
+    setSummary(null);
+    setError(null);
+  };
+
+  const handleFileSelection = async (file) => {
+    if (!file) {
+      resetCurrentUpload();
       return;
     }
-    setSelectedFile(file);
+
+    const fileName = file.name?.toLowerCase() || '';
+    if (!fileName.endsWith('.csv') && !fileName.endsWith('.xlsx')) {
+      setError('Solo se permiten archivos .csv o .xlsx.');
+      return;
+    }
+
+    setParsing(true);
     setError(null);
     setSummary(null);
+
+    try {
+      const parsedRecords = await parseUploadFile(file);
+      if (!parsedRecords.length) {
+        throw new Error('La plantilla está vacía.');
+      }
+      if (parsedRecords.length > 500) {
+        throw new Error('Solo se permiten 500 filas por carga.');
+      }
+
+      const filteredRecords = parsedRecords
+        .map((record, index) => ({
+          id: createRowId(index),
+          rowNumber: getRowNumberFromRecord(record, index),
+          data: mapUploadRow(record),
+          issues: [],
+          suggestions: [],
+          status: 'pending',
+          programMatch: null,
+          selectedProgramCode: null
+        }))
+        .filter((record) => !isRowEmpty(record.data));
+
+      if (!filteredRecords.length) {
+        throw new Error('No encontramos datos válidos en la plantilla.');
+      }
+
+      const evaluated = filteredRecords.map((row) => evaluateUploadRow(row, programIndex));
+      setRows(evaluated);
+      setSelectedFile(file);
+    } catch (err) {
+      setError(err.message || 'No pudimos leer el archivo seleccionado.');
+      setRows([]);
+      setSelectedFile(null);
+    } finally {
+      setParsing(false);
+    }
   };
 
   const handleInputChange = (event) => {
@@ -519,38 +611,99 @@ function BulkUploadModal ({ open, onClose, onUploaded }) {
     event.stopPropagation();
   };
 
-  const handleUpload = async () => {
-    if (!selectedFile) {
-      setError('Selecciona un archivo para continuar.');
+  const handleProgramOverride = (rowId, programCode) => {
+    setRows((prev) => prev.map((row) => {
+      if (row.id !== rowId) return row;
+      const program = programCode ? programIndex.byCode.get(programCode) : null;
+      const nextData = {
+        ...row.data,
+        nombrePrograma: program?.nombre || row.data.nombrePrograma
+      };
+      return evaluateUploadRow({ ...row, data: nextData, selectedProgramCode: programCode || null }, programIndex);
+    }));
+  };
+
+  const handleSuggestionClick = (rowId, suggestion) => {
+    if (!suggestion) return;
+    setRows((prev) => prev.map((row) => {
+      if (row.id !== rowId) return row;
+      return evaluateUploadRow({
+        ...row,
+        selectedProgramCode: suggestion.cod_programa || null,
+        data: { ...row.data, nombrePrograma: suggestion.nombre }
+      }, programIndex);
+    }));
+  };
+
+  const handleConfirmUpload = async () => {
+    if (!canSubmit) {
+      setError('Aún quedan filas por revisar.');
       return;
     }
+
     setUploading(true);
     setError(null);
+
+    const payloadRows = rows.map((row) => ({
+      row: row.rowNumber,
+      rut: row.data.rut,
+      nombres: row.data.nombres,
+      apellidos: row.data.apellidos,
+      correo: row.data.correo,
+      telefono: row.data.telefono,
+      nombrePrograma: row.data.nombrePrograma,
+      codPrograma: row.selectedProgramCode || row.programMatch?.cod_programa,
+      fechaMatricula: row.data.fechaMatricula,
+      sede: row.data.sede,
+      matricula: row.data.matricula,
+      valorComision: row.data.valorComision,
+      versionPrograma: row.data.versionPrograma,
+      comentarioAsesor: row.data.comentarioAsesor
+    }));
+
     try {
-      const result = await uploadBulkRecords(selectedFile);
+      const result = await submitManualBulkRecords(payloadRows);
       setSummary(result);
       onUploaded?.(result.records || []);
+      setRows([]);
+      setSelectedFile(null);
     } catch (err) {
-      setSummary(null);
-      setError(err.message);
+      if (err.issues) {
+        const issueList = Array.isArray(err.issues) ? err.issues : [];
+        setRows((prev) => prev.map((row) => {
+          const serverIssue = issueList.find((issue) => issue.fila === row.rowNumber);
+          if (!serverIssue) return row;
+          const suggestionObjects = (serverIssue.sugerencias || []).map((name) => {
+            const normalized = normalizeProgramName(name);
+            return programIndex.byName.get(normalized) || { cod_programa: null, nombre: name };
+          });
+          return {
+            ...row,
+            status: 'needs-review',
+            issues: Array.isArray(serverIssue.mensajes) && serverIssue.mensajes.length
+              ? serverIssue.mensajes
+              : ['Revisa la información de esta fila.'],
+            suggestions: suggestionObjects
+          };
+        }));
+        setError(err.message || 'Hay filas que necesitan revisión.');
+      } else {
+        setError(err.message || 'No pudimos completar la carga.');
+      }
     } finally {
       setUploading(false);
     }
   };
 
-  const templateUrl = '/templates/carga_masiva_comisiones.csv';
-
-  // Helper para descargar observaciones como CSV
-  function handleDownloadObservations () {
+  const handleDownloadObservations = () => {
     if (!summary?.errors?.length) {
       window.alert('No hay registros con observaciones para descargar.');
       return;
     }
-    // Generar CSV con fila, mensajes y todos los datos relevantes
     const header = [
       'Fila', 'RUT', 'Nombres', 'Apellidos', 'Correo', 'Código programa', 'Nombre programa', 'Matrícula', 'Sede', 'Versión', 'Observaciones'
     ];
-    const rows = summary.errors.map((err) => {
+    const rowsToExport = summary.errors.map((err) => {
       const messages = Array.isArray(err.messages) ? err.messages.join('; ') : err.message;
       return [
         err.row,
@@ -566,7 +719,7 @@ function BulkUploadModal ({ open, onClose, onUploaded }) {
         messages
       ];
     });
-    const csv = `${header.join(',')}` + '\n' + rows.map(r => r.map(v => `"${String(v).replace(/"/g, '""')}"`).join(',')).join('\n') + '\n';
+    const csv = `${header.join(',')}` + '\n' + rowsToExport.map((r) => r.map((v) => `"${String(v ?? '').replace(/"/g, '""')}"`).join(',')).join('\n') + '\n';
     const filename = `observaciones-carga-masiva-${new Date().toISOString().split('T')[0]}.csv`;
     const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
     const url = window.URL.createObjectURL(blob);
@@ -577,26 +730,28 @@ function BulkUploadModal ({ open, onClose, onUploaded }) {
     link.click();
     link.remove();
     window.URL.revokeObjectURL(url);
-  }
+  };
 
-  const errorsPreview = summary?.errors?.slice(0, 5) || [];
+  const statusMessage = hasRows
+    ? `${validCount} listas · ${reviewCount} por corregir`
+    : 'Selecciona un archivo para comenzar.';
 
   return (
     <div className="fixed inset-0 z-40 flex items-center justify-center bg-slate-900/60 px-4 py-6">
-      <div className="w-full max-w-2xl max-h-[90vh] overflow-y-auto rounded-2xl bg-white p-6 shadow-2xl">
-        <div className="flex items-start justify-between gap-4">
+      <div className="w-full max-w-5xl max-h-[92vh] overflow-y-auto rounded-3xl bg-white p-6 shadow-2xl">
+        <div className="flex flex-wrap items-start justify-between gap-4">
           <div>
-            <p className="text-sm font-semibold uppercase tracking-wide text-indigo-500">Carga masiva</p>
-            <h3 className="text-xl font-semibold text-slate-900">Sube varias comisiones desde Excel</h3>
-            <p className="mt-1 text-sm text-slate-500">Sigue los pasos para validar tus datos antes de enviarlos.</p>
+            <p className="text-sm font-semibold uppercase tracking-[0.3em] text-indigo-500">Carga masiva asistida</p>
+            <h3 className="text-2xl font-semibold text-slate-900">Revisa y confirma tus casos</h3>
+            <p className="mt-1 text-sm text-slate-500">Validamos automáticamente los campos y puedes corregir los programas antes de enviar.</p>
           </div>
           <button onClick={onClose} className="text-slate-400 transition hover:text-slate-600">✕</button>
         </div>
 
-        <div className="mt-5 space-y-4">
+        <div className="mt-6 grid gap-4 md:grid-cols-2">
           <div className="rounded-2xl border border-slate-200 p-4">
             <p className="text-sm font-semibold text-slate-700">1. Descarga la plantilla</p>
-            <p className="mt-1 text-xs text-slate-500">Incluye ejemplos y todos los campos obligatorios.</p>
+            <p className="mt-1 text-xs text-slate-500">Incluye los campos actualizados y un ejemplo completo.</p>
             <a
               href={templateUrl}
               download
@@ -607,95 +762,447 @@ function BulkUploadModal ({ open, onClose, onUploaded }) {
           </div>
 
           <div
-            className="rounded-2xl border-2 border-dashed border-slate-300 p-6 text-center transition hover:border-slate-400"
+            className="rounded-2xl border-2 border-dashed border-slate-300 p-4 text-center transition hover:border-slate-400"
             onDrop={handleDrop}
             onDragOver={handleDragOver}
           >
             <input
               id="bulk-upload-input"
               type="file"
-              accept=".csv,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+              accept=".csv,.xlsx"
               className="hidden"
               onChange={handleInputChange}
             />
             <label htmlFor="bulk-upload-input" className="flex cursor-pointer flex-col items-center gap-2 text-sm text-slate-600">
-              <span className="text-3xl">📄</span>
-              <span className="font-semibold">2. Arrastra o selecciona tu archivo</span>
-              <span className="text-xs text-slate-500">Formatos admitidos: .csv o .xlsx (máx. 2 MB)</span>
-            </label>
-            {selectedFile ? (
-              <div className="mt-3 rounded-full bg-slate-100 px-4 py-1 text-xs font-medium text-slate-600">
-                {selectedFile.name} · {(selectedFile.size / 1024).toFixed(0)} KB
-              </div>
-            ) : null}
-          </div>
-
-          {error ? (
-            <div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
-              {error}
-            </div>
-          ) : null}
-
-          {summary ? (
-            <div className="space-y-3 rounded-2xl border border-slate-200 p-4">
-              <div className="flex flex-wrap items-center gap-3">
-                <span className="rounded-full bg-emerald-100 px-3 py-1 text-sm font-semibold text-emerald-800">
-                  {summary.inserted} registros creados
-                </span>
-                <span className="rounded-full bg-amber-100 px-3 py-1 text-sm font-semibold text-amber-800">
-                  {summary.failed} con observaciones
-                </span>
-                {summary.failed > 0 ? (
-                  <button
-                    type="button"
-                    onClick={handleDownloadObservations}
-                    className="rounded-full bg-amber-600 px-4 py-1 text-xs font-semibold text-white hover:bg-amber-700"
-                  >
-                    Descargar observaciones
-                  </button>
-                ) : null}
-              </div>
-              {errorsPreview.length > 0 ? (
-                <div>
-                  <p className="text-sm font-semibold text-slate-700">Filas que necesitan revisión:</p>
-                  <ul className="mt-2 space-y-1 text-sm text-slate-600">
-                    {errorsPreview.map((errItem, index) => (
-                      <li key={`${errItem.row}-${index}`} className="rounded bg-slate-100 px-3 py-1">
-                        Fila {errItem.row}: {Array.isArray(errItem.messages) ? errItem.messages.join('; ') : errItem.message}
-                      </li>
-                    ))}
-                  </ul>
-                  {summary?.errors && summary.errors.length > errorsPreview.length ? (
-                    <p className="mt-2 text-xs text-slate-500">Se ocultaron {summary.errors.length - errorsPreview.length} filas adicionales.</p>
-                  ) : null}
-                </div>
+              <span className="text-3xl">📂</span>
+              {parsing ? (
+                <>
+                  <span className="font-semibold text-slate-900">Procesando archivo…</span>
+                  <span className="text-xs text-slate-500">Estamos revisando tus filas.</span>
+                </>
+              ) : selectedFile ? (
+                <>
+                  <span className="font-semibold text-slate-900">{selectedFile.name}</span>
+                  <span className="text-xs text-slate-500">{statusMessage}</span>
+                </>
               ) : (
-                <p className="text-sm text-slate-600">¡Todo listo! Los registros ya están disponibles en tu tabla.</p>
+                <>
+                  <span className="font-semibold text-slate-900">Arrastra tu archivo aquí</span>
+                  <span className="text-xs text-slate-500">o haz clic para seleccionar</span>
+                </>
               )}
-            </div>
-          ) : null}
+              <span className="text-[11px] text-slate-400">Formatos soportados: CSV, XLSX · Máx 500 filas</span>
+            </label>
+          </div>
         </div>
 
-        <div className="mt-6 flex flex-wrap justify-end gap-3">
-          <button
-            type="button"
-            onClick={onClose}
-            className="rounded-full border border-slate-300 px-5 py-2 text-sm font-semibold text-slate-600 hover:border-slate-400"
-          >
-            Cerrar
-          </button>
-          <button
-            type="button"
-            onClick={handleUpload}
-            disabled={uploading || !selectedFile}
-            className="rounded-full bg-indigo-600 px-5 py-2 text-sm font-semibold text-white transition hover:bg-indigo-700 disabled:opacity-50"
-          >
-            {uploading ? 'Cargando...' : 'Subir archivo'}
-          </button>
+        {error && (
+          <div className="mt-4 rounded-xl border border-red-200 bg-red-50 px-4 py-2 text-sm text-red-700">
+            {error}
+          </div>
+        )}
+
+        {catalogError && (
+          <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-2 text-sm text-amber-900">
+            {catalogError}
+          </div>
+        )}
+
+        {summary && (
+          <div className="mt-4 rounded-2xl border border-slate-200 p-4">
+            <p className="text-sm font-semibold text-slate-700">Resultado de la última carga</p>
+            <div className="mt-2 grid gap-4 text-sm text-slate-600 md:grid-cols-3">
+              <div>
+                <p className="text-xs text-slate-400">Registros correctos</p>
+                <p className="text-lg font-semibold text-emerald-600">{summary.successCount || 0}</p>
+              </div>
+              <div>
+                <p className="text-xs text-slate-400">Registros con observaciones</p>
+                <p className="text-lg font-semibold text-amber-600">{summary.errorCount || 0}</p>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={handleDownloadObservations}
+                  className="rounded-full border border-slate-200 px-3 py-1 text-xs font-semibold text-slate-600 hover:bg-slate-50"
+                >
+                  Descargar observaciones
+                </button>
+                <button
+                  onClick={resetCurrentUpload}
+                  className="rounded-full border border-slate-200 px-3 py-1 text-xs font-semibold text-slate-600 hover:bg-slate-50"
+                >
+                  Iniciar otra carga
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        <div className="mt-6 rounded-3xl border border-slate-200">
+          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 px-4 py-3">
+            <div>
+              <p className="text-sm font-semibold text-slate-900">Revisión previa</p>
+              <p className="text-xs text-slate-500">Corrige los programas antes de enviar. {loadingPrograms ? 'Descargando catálogo…' : ''}</p>
+            </div>
+            <div className="flex gap-2">
+              <button onClick={resetCurrentUpload} className="rounded-full border border-slate-200 px-3 py-1 text-xs text-slate-500 hover:bg-slate-50">
+                Limpiar selección
+              </button>
+              <button
+                disabled={!canSubmit}
+                onClick={handleConfirmUpload}
+                className={`rounded-full px-4 py-1.5 text-sm font-semibold text-white transition ${canSubmit ? 'bg-slate-900 hover:bg-slate-800' : 'bg-slate-400 cursor-not-allowed'}`}
+              >
+                {uploading ? 'Enviando…' : 'Confirmar carga'}
+              </button>
+            </div>
+          </div>
+
+          <div className="max-h-[45vh] overflow-y-auto">
+            <table className="w-full text-left text-sm">
+              <thead className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
+                <tr>
+                  <th className="px-4 py-2">Fila</th>
+                  <th className="px-4 py-2">Programa</th>
+                  <th className="px-4 py-2">Código sugerido</th>
+                  <th className="px-4 py-2">Estado</th>
+                  <th className="px-4 py-2">Acciones</th>
+                </tr>
+              </thead>
+              <tbody>
+                {rows.length === 0 && (
+                  <tr>
+                    <td colSpan="5" className="px-4 py-8 text-center text-sm text-slate-400">
+                      Carga un archivo para comenzar la revisión.
+                    </td>
+                  </tr>
+                )}
+
+                {rows.map((row) => (
+                  <tr key={row.id} className="border-t border-slate-100">
+                    <td className="px-4 py-3 font-mono text-xs text-slate-500">#{row.rowNumber}</td>
+                    <td className="px-4 py-3">
+                      <p className="text-sm font-semibold text-slate-900">{row.data.nombrePrograma || '—'}</p>
+                      <p className="text-xs text-slate-500">{row.data.nombres} {row.data.apellidos}</p>
+                    </td>
+                    <td className="px-4 py-3">
+                      {row.programMatch ? (
+                        <div className="rounded-xl border border-slate-200 px-3 py-2">
+                          <p className="text-xs font-semibold text-emerald-600">{row.programMatch.cod_programa}</p>
+                          <p className="text-xs text-slate-500">{row.programMatch.nombre}</p>
+                        </div>
+                      ) : row.suggestions.length ? (
+                        <div className="space-y-2">
+                          {row.suggestions.slice(0, 3).map((suggestion) => (
+                            <button
+                              key={suggestion.cod_programa || suggestion.nombre}
+                              onClick={() => handleSuggestionClick(row.id, suggestion)}
+                              className="flex w-full flex-col rounded-xl border border-slate-200 px-3 py-2 text-left text-xs text-slate-600 hover:border-slate-400"
+                            >
+                              <span className="font-semibold text-slate-900">{suggestion.cod_programa || '—'}</span>
+                              <span>{suggestion.nombre}</span>
+                            </button>
+                          ))}
+                        </div>
+                      ) : (
+                        <span className="text-xs text-slate-400">Sin sugerencias</span>
+                      )}
+                    </td>
+                    <td className="px-4 py-3">
+                      <RowStatusPill status={row.status} />
+                      {row.issues.length > 0 && (
+                        <ul className="mt-2 space-y-1 text-xs text-amber-600">
+                          {row.issues.map((issue, idx) => (
+                            <li key={idx}>{issue}</li>
+                          ))}
+                        </ul>
+                      )}
+                    </td>
+                    <td className="px-4 py-3">
+                      <select
+                        className="w-full rounded-xl border border-slate-200 px-3 py-2 text-xs text-slate-700"
+                        value={row.selectedProgramCode || row.programMatch?.cod_programa || ''}
+                        onChange={(event) => handleProgramOverride(row.id, event.target.value)}
+                      >
+                        <option value="">Selecciona un código</option>
+                        {programs.map((program) => (
+                          <option key={program.cod_programa} value={program.cod_programa}>
+                            {program.cod_programa} · {program.nombre}
+                          </option>
+                        ))}
+                      </select>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </div>
       </div>
     </div>
   );
+}
+
+function RowStatusPill ({ status }) {
+  const tone = {
+    valid: 'bg-emerald-100 text-emerald-700',
+    'needs-review': 'bg-amber-100 text-amber-700',
+    pending: 'bg-slate-100 text-slate-600'
+  }[status || 'pending'];
+
+  const label = {
+    valid: 'Lista',
+    'needs-review': 'Revisar',
+    pending: 'Pendiente'
+  }[status || 'pending'];
+
+  return (
+    <span className={`inline-flex items-center rounded-full px-3 py-1 text-xs font-semibold ${tone}`}>
+      {label}
+    </span>
+  );
+}
+
+const REQUIRED_UPLOAD_FIELDS = [
+  { key: 'rut', label: 'RUT' },
+  { key: 'nombres', label: 'Nombres' },
+  { key: 'apellidos', label: 'Apellidos' },
+  { key: 'correo', label: 'Correo' },
+  { key: 'nombrePrograma', label: 'Nombre programa' }
+];
+
+const FRONT_BULK_COLUMN_MAP = {
+  rut: 'rut',
+  rutsinpuntos: 'rut',
+  nombres: 'nombres',
+  apellidos: 'apellidos',
+  correo: 'correo',
+  email: 'correo',
+  telefono: 'telefono',
+  celular: 'telefono',
+  nombreprograma: 'nombrePrograma',
+  programa: 'nombrePrograma',
+  codprograma: 'codPrograma',
+  codigo: 'codPrograma',
+  fechamatricula: 'fechaMatricula',
+  fecha: 'fechaMatricula',
+  sede: 'sede',
+  valormatricula: 'matricula',
+  matricula: 'matricula',
+  valorarancel: 'valorComision',
+  valorcomision: 'valorComision',
+  arancel: 'valorComision',
+  versionprograma: 'versionPrograma',
+  version: 'versionPrograma',
+  comentarioasesor: 'comentarioAsesor',
+  comentario: 'comentarioAsesor'
+};
+
+function createRowId (index = 0) {
+  if (typeof crypto !== 'undefined' && crypto.randomUUID) {
+    return crypto.randomUUID();
+  }
+  return `row-${Date.now()}-${index}`;
+}
+
+function normalizeHeaderKey (key) {
+  return key?.toString().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]/g, '') || '';
+}
+
+function mapUploadRow (rawRow) {
+  const mapped = Object.entries(rawRow || {}).reduce((acc, [key, value]) => {
+    const normalizedKey = normalizeHeaderKey(key);
+    const target = FRONT_BULK_COLUMN_MAP[normalizedKey];
+    if (!target) return acc;
+    acc[target] = typeof value === 'string' ? value.trim() : value;
+    return acc;
+  }, {});
+
+  return {
+    rut: (mapped.rut || '').replace(/[.\-]/g, '').toUpperCase(),
+    nombres: mapped.nombres || '',
+    apellidos: mapped.apellidos || '',
+    correo: (mapped.correo || '').toLowerCase(),
+    telefono: mapped.telefono || '',
+    codPrograma: mapped.codPrograma || '',
+    nombrePrograma: mapped.nombrePrograma || '',
+    fechaMatricula: mapped.fechaMatricula || '',
+    sede: mapped.sede || '',
+    matricula: parseAmount(mapped.matricula),
+    valorComision: parseAmount(mapped.valorComision),
+    versionPrograma: mapped.versionPrograma || '',
+    comentarioAsesor: mapped.comentarioAsesor || ''
+  };
+}
+
+function isRowEmpty (rowData = {}) {
+  return Object.values(rowData).every((value) => `${value ?? ''}`.trim() === '');
+}
+
+function getRowNumberFromRecord (record, index) {
+  if (record && typeof record.__rowNum__ === 'number') {
+    return record.__rowNum__ + 1;
+  }
+  if (record && typeof record.__rowNum === 'number') {
+    return record.__rowNum + 1;
+  }
+  return index + 2; // header row offset
+}
+
+function normalizeProgramName (value) {
+  if (!value) return '';
+  return value
+    .toString()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/&/g, 'Y')
+    .toUpperCase()
+    .replace(/[^A-Z0-9 ]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function parseAmount (value) {
+  if (value === null || value === undefined || value === '') {
+    return '';
+  }
+  const numeric = Number(String(value).replace(/[^0-9.-]/g, ''));
+  return Number.isFinite(numeric) ? numeric : '';
+}
+
+function parseUploadFile (file) {
+  const extension = (file.name?.split('.').pop() || '').toLowerCase();
+  if (extension === 'csv') {
+    return new Promise((resolve, reject) => {
+      Papa.parse(file, {
+        header: true,
+        skipEmptyLines: 'greedy',
+        complete: (result) => resolve(result.data || []),
+        error: (err) => reject(err)
+      });
+    });
+  }
+
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      try {
+        const data = new Uint8Array(event.target.result);
+        const workbook = XLSX.read(data, { type: 'array' });
+        const sheetName = workbook.SheetNames[0];
+        const sheet = workbook.Sheets[sheetName];
+        const json = XLSX.utils.sheet_to_json(sheet, { defval: '' });
+        resolve(json);
+      } catch (err) {
+        reject(err);
+      }
+    };
+    reader.onerror = () => reject(new Error('No pudimos leer el archivo XLSX.'));
+    reader.readAsArrayBuffer(file);
+  });
+}
+
+function buildProgramIndex (catalog = []) {
+  const byCode = new Map();
+  const byName = new Map();
+  catalog.forEach((program) => {
+    if (program.cod_programa) {
+      byCode.set(program.cod_programa, program);
+    }
+    const normalized = normalizeProgramName(program.nombre);
+    if (normalized) {
+      byName.set(normalized, program);
+    }
+  });
+  return { list: catalog, byCode, byName };
+}
+
+function evaluateUploadRow (row, programIndex) {
+  const issues = [];
+  let programMatch = null;
+  let suggestions = [];
+
+  REQUIRED_UPLOAD_FIELDS.forEach((field) => {
+    if (!row.data[field.key]) {
+      issues.push(`${field.label} es obligatorio.`);
+    }
+  });
+
+  const normalizedName = normalizeProgramName(row.data.nombrePrograma);
+  if (row.selectedProgramCode) {
+    const program = programIndex.byCode.get(row.selectedProgramCode);
+    if (program) {
+      programMatch = program;
+    } else {
+      issues.push('El código seleccionado no existe.');
+    }
+  } else if (normalizedName) {
+    programMatch = programIndex.byName.get(normalizedName) || null;
+  }
+
+  if (!programMatch && normalizedName) {
+    suggestions = getProgramSuggestions(normalizedName, programIndex.list);
+    if (!suggestions.length) {
+      issues.push('No pudimos encontrar un programa similar.');
+    }
+  }
+
+  if (!normalizedName) {
+    issues.push('Indica el nombre del programa.');
+  }
+
+  const status = issues.length === 0 && (programMatch || row.selectedProgramCode)
+    ? 'valid'
+    : issues.length ? 'needs-review' : 'pending';
+
+  return {
+    ...row,
+    programMatch,
+    suggestions,
+    issues,
+    status
+  };
+}
+
+function getProgramSuggestions (normalizedName, catalog = []) {
+  if (!normalizedName) return [];
+  return catalog
+    .map((program) => {
+      const normalizedCatalogName = normalizeProgramName(program.nombre);
+      const distance = computeStringDistance(normalizedName, normalizedCatalogName);
+      const ratio = distance / Math.max(normalizedName.length, normalizedCatalogName.length, 1);
+      return { ...program, distance, ratio };
+    })
+    .filter((item) => item.ratio <= 0.5)
+    .sort((a, b) => a.distance - b.distance)
+    .slice(0, 3);
+}
+
+function computeStringDistance (a, b) {
+  if (a === b) return 0;
+  if (!a.length) return b.length;
+  if (!b.length) return a.length;
+
+  const matrix = Array.from({ length: b.length + 1 }, (_, i) => [i]);
+  for (let j = 0; j <= a.length; j += 1) {
+    matrix[0][j] = j;
+  }
+
+  for (let i = 1; i <= b.length; i += 1) {
+    for (let j = 1; j <= a.length; j += 1) {
+      if (b.charAt(i - 1) === a.charAt(j - 1)) {
+        matrix[i][j] = matrix[i - 1][j - 1];
+      } else {
+        matrix[i][j] = Math.min(
+          matrix[i - 1][j] + 1,
+          matrix[i][j - 1] + 1,
+          matrix[i - 1][j - 1] + 1
+        );
+      }
+    }
+  }
+
+  return matrix[b.length][a.length];
 }
 
 const initialRecordForm = () => ({
