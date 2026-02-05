@@ -5,6 +5,7 @@
   deleteRecordForUser,
   getProgramsCatalog,
   bulkCreateRecordsForUser,
+  bulkCreateRecordsFromManualPayload,
   exportRecordForUser
 } from '../services/recordService.js';
 
@@ -100,6 +101,29 @@ export async function bulkCreateRecords (req, res) {
   } catch (error) {
     const status = error.statusCode || 400;
     res.status(status).json({ message: error.message || 'No se pudo procesar el archivo', detail: error.detail });
+  }
+}
+
+export async function manualBulkCreateRecords (req, res) {
+  const rows = Array.isArray(req.body?.rows) ? req.body.rows : [];
+  if (!rows.length) {
+    return res.status(400).json({ error: 'EMPTY_PAYLOAD', message: 'Debes incluir al menos una fila para cargar.' });
+  }
+
+  try {
+    const result = await bulkCreateRecordsFromManualPayload(req.user.id, rows);
+    res.status(201).json(result);
+  } catch (error) {
+    if (error.code === 'PROGRAM_NAME_MISMATCH' || error.code === 'PROGRAM_NAME_REQUIRED' || error.code === 'DUPLICATE_ENTRY' || error.code === 'BULK_VALIDATION_FAILED' || error.issues) {
+      return res.status(error.statusCode || 400).json({
+        error: error.code || 'BULK_VALIDATION_FAILED',
+        message: error.message || 'La carga contiene filas que requieren revisión',
+        issues: error.issues || []
+      });
+    }
+
+    const status = error.statusCode || 400;
+    res.status(status).json({ message: error.message || 'No se pudo procesar la carga.', detail: error.detail });
   }
 }
 

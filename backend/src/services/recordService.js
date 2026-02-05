@@ -1,4 +1,5 @@
 import XLSX from 'xlsx';
+import { distance } from 'fastest-levenshtein';
 import db from '../db/pool.js';
 import { createStudentWithProgram } from './studentService.js';
 
@@ -50,7 +51,10 @@ const BULK_COLUMN_MAP = {
   fechamatricula: 'fechaMatricula',
   fecha: 'fechaMatricula',
   sede: 'sede',
+  valormatricula: 'matricula',
   matricula: 'matricula',
+  valorarancel: 'valorComision',
+  valorcomision: 'valorComision',
   versionprograma: 'versionPrograma',
   version: 'versionPrograma',
   comentarioasesor: 'comentarioAsesor',
@@ -62,7 +66,6 @@ const REQUIRED_BULK_FIELDS = [
   { key: 'nombres', label: 'Nombres' },
   { key: 'apellidos', label: 'Apellidos' },
   { key: 'correo', label: 'Correo' },
-  { key: 'codPrograma', label: 'Código de programa' },
   { key: 'nombrePrograma', label: 'Nombre de programa' }
 ];
 
@@ -124,8 +127,7 @@ function sanitizeRut (value) {
   return value.toString().replace(/\./g, '').toUpperCase();
 }
 
-function prepareBulkRow (rawRow) {
-  const mappedRow = mapBulkRow(rawRow);
+function evaluateMappedRow (mappedRow) {
   const meaningfulValues = Object.values(mappedRow).filter((val) => val !== undefined && val !== null && `${val}`.trim() !== '');
   if (meaningfulValues.length === 0) {
     return null;
@@ -157,6 +159,16 @@ function prepareBulkRow (rawRow) {
     }
   }
 
+  let valorComisionNumber;
+  if (mappedRow.valorComision !== undefined && mappedRow.valorComision !== null && `${mappedRow.valorComision}`.trim() !== '') {
+    const parsed = Number(mappedRow.valorComision);
+    if (Number.isNaN(parsed)) {
+      errors.push('El valor del arancel debe ser numérico');
+    } else {
+      valorComisionNumber = parsed;
+    }
+  }
+
   const payload = {
     rut: sanitizeRut(mappedRow.rut),
     nombres: mappedRow.nombres,
@@ -169,13 +181,22 @@ function prepareBulkRow (rawRow) {
     estadoPago: 'Pendiente de pago',
     fechaMatricula: fechaMatricula || undefined,
     sede: mappedRow.sede || undefined,
-    valorComision: 0,
+    valorComision: valorComisionNumber ?? 0,
     matricula: matriculaNumber,
     versionPrograma: mappedRow.versionPrograma ? String(mappedRow.versionPrograma) : '1',
     comentarioAsesor: mappedRow.comentarioAsesor || undefined
   };
 
   return { payload, errors };
+}
+
+function prepareBulkRow (rawRow) {
+  const mappedRow = mapBulkRow(rawRow);
+  const evaluation = evaluateMappedRow(mappedRow);
+  if (!evaluation) {
+    return null;
+  }
+  return { ...evaluation, mappedRow };
 }
 
 function extractRowsFromBuffer (buffer) {
@@ -186,6 +207,133 @@ function extractRowsFromBuffer (buffer) {
   }
   const sheet = workbook.Sheets[firstSheetName];
   return XLSX.utils.sheet_to_json(sheet, { defval: '' });
+}
+
+function normalizeProgramName (value) {
+  if (!value) return '';
+  return value
+    .toString()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/&/g, 'Y')
+    .toUpperCase()
+    .replace(/[^A-Z0-9 ]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function buildProgramMatcher (programs = []) {
+  const entries = programs.map((program) => ({
+    ...program,
+    normalizedName: normalizeProgramName(program.nombre || '')
+  }));
+
+  const nameMap = new Map();
+  const codeMap = new Map();
+  entries.forEach((entry) => {
+    if (entry.normalizedName) {
+      nameMap.set(entry.normalizedName, entry);
+    }
+    if (entry.cod_programa) {
+      codeMap.set(entry.cod_programa.toUpperCase(), entry);
+    }
+  });
+
+  function suggest (name, limit = 3) {
+    const normalizedInput = normalizeProgramName(name);
+    if (!normalizedInput) {
+      return entries.slice(0, limit);
+    }
+    const ranking = entries
+      .map((entry) => ({
+        entry,
+        score: entry.normalizedName
+          ? distance(normalizedInput, entry.normalizedName)
+          : Number.MAX_SAFE_INTEGER
+      }))
+      .filter((item) => Number.isFinite(item.score))
+      .sort((a, b) => a.score - b.score);
+
+    const maxDistance = Math.max(4, Math.floor(normalizedInput.length / 2));
+    const filtered = ranking.filter((item) => item.score <= maxDistance);
+    const source = filtered.length > 0 ? filtered : ranking;
+    return source.slice(0, limit).map((item) => item.entry);
+  }
+
+  return {
+    matchByName: (name) => {
+      const normalized = normalizeProgramName(name);
+      if (!normalized) return null;
+      return nameMap.get(normalized) || null;
+    },
+    matchByCode: (code) => {
+      if (!code) return null;
+      return codeMap.get(code.toString().toUpperCase()) || null;
+    },
+    suggest
+  };
+}
+
+function resolveProgramForPayload (payload, matcher) {
+  if (!payload?.nombrePrograma && !payload?.codPrograma) {
+    return { errorCode: 'PROGRAM_NAME_REQUIRED' };
+  }
+
+  const byName = matcher.matchByName(payload.nombrePrograma);
+  if (byName) {
+    return { program: byName };
+  }
+
+  const byCode = matcher.matchByCode(payload.codPrograma);
+  if (byCode) {
+    return { program: byCode };
+  }
+
+  if (!payload?.nombrePrograma) {
+    return { errorCode: 'PROGRAM_NAME_REQUIRED' };
+  }
+
+  return {
+    errorCode: 'PROGRAM_NAME_MISMATCH',
+    suggestions: matcher.suggest(payload.nombrePrograma)
+  };
+}
+
+function extractRowNumber (rawRow, index) {
+  if (rawRow && typeof rawRow.row === 'number') return rawRow.row;
+  if (rawRow && typeof rawRow.rowNumber === 'number') return rawRow.rowNumber;
+  if (rawRow && typeof rawRow.fila === 'number') return rawRow.fila;
+  if (rawRow && typeof rawRow.__rowNum__ === 'number') return rawRow.__rowNum__ + 1;
+  return index + 2;
+}
+
+function buildFeedbackData (mappedRow, rowNumber) {
+  return {
+    row: rowNumber,
+    rut: mappedRow.rut || '',
+    nombres: mappedRow.nombres || '',
+    apellidos: mappedRow.apellidos || '',
+    correo: mappedRow.correo || '',
+    codPrograma: mappedRow.codPrograma || '',
+    nombrePrograma: mappedRow.nombrePrograma || '',
+    matricula: mappedRow.matricula || '',
+    sede: mappedRow.sede || '',
+    versionPrograma: mappedRow.versionPrograma || ''
+  };
+}
+
+function buildManualBulkError (entries) {
+  const error = new Error('La carga contiene filas que requieren revisión');
+  error.statusCode = 400;
+  const codes = Array.from(new Set(entries.map((entry) => entry.errorCode).filter(Boolean)));
+  error.code = codes.length === 1 ? codes[0] : 'BULK_VALIDATION_FAILED';
+  error.issues = entries.map((entry) => ({
+    fila: entry.row,
+    mensajes: entry.messages,
+    nombreIngresado: entry.nombrePrograma,
+    sugerencias: entry.suggestions || []
+  }));
+  return error;
 }
 
 function mapRecordRow (row) {
@@ -231,6 +379,151 @@ async function fetchUserAccess (userId) {
 async function fetchRecordById (recordId) {
   const { rows } = await db.query(`${RECORD_SELECT} WHERE c.id = $1`, [recordId]);
   return rows[0] ? mapRecordRow(rows[0]) : null;
+}
+
+async function buildDuplicateChecker (advisorId, candidates) {
+  if (!candidates.length) {
+    return () => null;
+  }
+
+  const rutList = Array.from(new Set(candidates.map((entry) => entry.payload.rut).filter(Boolean)));
+  let existingRows = [];
+  if (rutList.length) {
+    const { rows } = await db.query(
+      `SELECT rut_estudiante, matricula FROM ${SCHEMA}.comisiones WHERE id_asesor = $1 AND rut_estudiante = ANY($2)`,
+      [advisorId, rutList]
+    );
+    existingRows = rows.map((row) => ({
+      rut: sanitizeRut(row.rut_estudiante),
+      matricula: row.matricula ? String(row.matricula).trim() : ''
+    }));
+  }
+
+  const seenBatch = new Set();
+  return (payload) => {
+    if (!payload.rut) return null;
+    const matriculaKey = payload.matricula !== undefined && payload.matricula !== null
+      ? String(payload.matricula).trim()
+      : '';
+    const key = `${payload.rut}::${matriculaKey}`;
+    if (seenBatch.has(key)) {
+      return 'Registro duplicado dentro del archivo';
+    }
+    seenBatch.add(key);
+    const duplicate = existingRows.some((row) => {
+      if (row.rut !== payload.rut) return false;
+      if (matriculaKey && row.matricula) {
+        return row.matricula === matriculaKey;
+      }
+      return true;
+    });
+    return duplicate ? 'Registro duplicado: ya existe en la base de datos' : null;
+  };
+}
+
+async function processBulkRows (userId, rawRows, { strict = false } = {}) {
+  if (!Array.isArray(rawRows) || rawRows.length === 0) {
+    throw buildBulkError('La plantilla está vacía.');
+  }
+
+  if (rawRows.length > MAX_BULK_ROWS) {
+    throw buildBulkError(`Solo se permiten ${MAX_BULK_ROWS} filas por carga.`);
+  }
+
+  const advisorId = await getAdvisorBx24Id(userId);
+  const programs = await getProgramsCatalog();
+  const matcher = buildProgramMatcher(programs);
+
+  const errors = [];
+  const candidates = [];
+
+  for (let index = 0; index < rawRows.length; index += 1) {
+    const rawRow = rawRows[index];
+    const prepared = prepareBulkRow(rawRow);
+    if (!prepared) {
+      continue;
+    }
+
+    const rowNumber = extractRowNumber(rawRow, index);
+    const feedbackData = buildFeedbackData(prepared.mappedRow, rowNumber);
+
+    if (prepared.errors.length) {
+      errors.push({ ...feedbackData, messages: prepared.errors, errorCode: 'VALIDATION_ERROR' });
+      continue;
+    }
+
+    candidates.push({ payload: prepared.payload, feedbackData });
+  }
+
+  const resolvedCandidates = [];
+
+  candidates.forEach((candidate) => {
+    const resolution = resolveProgramForPayload(candidate.payload, matcher);
+    if (!resolution.program) {
+      const message = resolution.errorCode === 'PROGRAM_NAME_REQUIRED'
+        ? 'El nombre del programa es obligatorio'
+        : 'Nombre de programa no reconocido';
+      errors.push({
+        ...candidate.feedbackData,
+        messages: [message],
+        errorCode: resolution.errorCode,
+        suggestions: (resolution.suggestions || []).map((item) => item.nombre)
+      });
+      return;
+    }
+
+    candidate.payload.codPrograma = resolution.program.cod_programa;
+    candidate.payload.nombrePrograma = resolution.program.nombre;
+    resolvedCandidates.push(candidate);
+  });
+
+  const duplicateChecker = await buildDuplicateChecker(advisorId, resolvedCandidates);
+  const readyForInsert = [];
+
+  resolvedCandidates.forEach((candidate) => {
+    const duplicateMessage = duplicateChecker(candidate.payload);
+    if (duplicateMessage) {
+      errors.push({
+        ...candidate.feedbackData,
+        messages: [duplicateMessage],
+        errorCode: 'DUPLICATE_ENTRY'
+      });
+      return;
+    }
+    readyForInsert.push(candidate);
+  });
+
+  if (strict && errors.length) {
+    throw buildManualBulkError(errors);
+  }
+
+  const inserted = [];
+  for (const entry of readyForInsert) {
+    try {
+      const result = await createStudentWithProgram({
+        ...entry.payload,
+        asesorId: advisorId
+      });
+      const record = await fetchRecordById(result.commission.id);
+      inserted.push(record ?? result.commission);
+    } catch (error) {
+      const entryError = {
+        ...entry.feedbackData,
+        messages: [error.message || 'No se pudo crear el registro']
+      };
+      if (strict) {
+        throw buildManualBulkError([entryError]);
+      }
+      errors.push(entryError);
+    }
+  }
+
+  return {
+    inserted: inserted.length,
+    failed: errors.length,
+    errors,
+    records: inserted
+  };
 }
 
 // Obtiene las comisiones asociadas a un usuario autenticado (por id UUID)
@@ -349,119 +642,20 @@ export async function bulkCreateRecordsForUser (userId, file) {
     throw buildBulkError('Solo se permiten archivos .csv o .xlsx.');
   }
 
-  const advisorId = await getAdvisorBx24Id(userId);
-
   let rows;
   try {
     rows = extractRowsFromBuffer(file.buffer);
   } catch (error) {
     throw buildBulkError('No se pudo leer el archivo. Asegúrate de que el formato sea válido.', error.message);
   }
+  return processBulkRows(userId, rows);
+}
 
-  if (!rows.length) {
-    throw buildBulkError('La plantilla está vacía.');
+export async function bulkCreateRecordsFromManualPayload (userId, rows) {
+  if (!Array.isArray(rows)) {
+    throw buildBulkError('Debes enviar un arreglo de filas.');
   }
-
-  if (rows.length > MAX_BULK_ROWS) {
-    throw buildBulkError(`Solo se permiten ${MAX_BULK_ROWS} filas por carga.`);
-  }
-
-  // NUEVO: Validar duplicados en base de datos antes de insertar
-  // 1. Obtener todos los RUT y matrícula de los registros a cargar
-  const bulkRutMatricula = rows.map((rawRow) => {
-    const mapped = mapBulkRow(rawRow);
-    return {
-      rut: mapped.rut ? sanitizeRut(mapped.rut) : null,
-      matricula: mapped.matricula ? String(mapped.matricula).trim() : null
-    };
-  }).filter(r => r.rut);
-
-  // 2. Consultar en la base de datos los registros existentes para ese asesor
-  const rutList = bulkRutMatricula.map(r => r.rut);
-  const matriculaList = bulkRutMatricula.map(r => r.matricula).filter(Boolean);
-  let existingRows = [];
-  if (rutList.length) {
-    const { rows: dbRows } = await db.query(
-      `SELECT rut_estudiante, matricula FROM ${SCHEMA}.comisiones WHERE id_asesor = $1 AND rut_estudiante = ANY($2)`,
-      [advisorId, rutList]
-    );
-    existingRows = dbRows.map(r => ({
-      rut: sanitizeRut(r.rut_estudiante),
-      matricula: r.matricula ? String(r.matricula).trim() : null
-    }));
-  }
-
-  // 3. Filtrar los que ya existen (por rut y matrícula si está presente)
-  function isDuplicate(row) {
-    return existingRows.some(dbRow => {
-      if (row.rut !== dbRow.rut) return false;
-      // Si matrícula está presente, comparar también
-      if (row.matricula && dbRow.matricula) {
-        return row.matricula === dbRow.matricula;
-      }
-      return true;
-    });
-  }
-
-  const inserted = [];
-  const errors = [];
-
-  for (let index = 0; index < rows.length; index += 1) {
-    const rawRow = rows[index];
-    const rowNumber = typeof rawRow.__rowNum__ === 'number' ? rawRow.__rowNum__ + 1 : index + 2;
-    const prepared = prepareBulkRow(rawRow);
-    if (!prepared) {
-      continue;
-    }
-
-    // Copia los datos originales para feedback (usar los datos originales del archivo, no el payload)
-    const mappedRow = mapBulkRow(rawRow);
-    const feedbackData = {
-      row: rowNumber,
-      rut: mappedRow.rut || '',
-      nombres: mappedRow.nombres || '',
-      apellidos: mappedRow.apellidos || '',
-      correo: mappedRow.correo || '',
-      codPrograma: mappedRow.codPrograma || '',
-      nombrePrograma: mappedRow.nombrePrograma || '',
-      matricula: mappedRow.matricula || '',
-      sede: mappedRow.sede || '',
-      versionPrograma: mappedRow.versionPrograma || '',
-    };
-
-    if (prepared.errors.length > 0) {
-      errors.push({ ...feedbackData, messages: prepared.errors });
-      continue;
-    }
-
-    // Validación de duplicados
-    const rut = prepared.payload.rut;
-    const matricula = prepared.payload.matricula ? String(prepared.payload.matricula).trim() : null;
-    if (isDuplicate({ rut, matricula })) {
-      errors.push({ ...feedbackData, messages: ['Registro duplicado: ya existe en la base de datos'] });
-      continue;
-    }
-
-    try {
-      const result = await createStudentWithProgram({
-        ...prepared.payload,
-        asesorId: advisorId
-      });
-      const record = await fetchRecordById(result.commission.id);
-      if (record) {
-        inserted.push(record);
-      }
-    } catch (error) {
-      errors.push({ ...feedbackData, messages: [error.message || 'No se pudo crear el registro'] });
-    }
-  }
-
-  return {
-    inserted: inserted.length,
-    failed: errors.length,
-    errors,
-    records: inserted
-  };
+  return processBulkRows(userId, rows, { strict: true });
 }
 
 export async function exportRecordForUser (userId, recordId) {

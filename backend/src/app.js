@@ -6,8 +6,10 @@ import config from './config/index.js'
 import authRoutes from './routes/authRoutes.js'
 import recordRoutes from './routes/recordRoutes.js'
 import adminRoutes from './routes/adminRoutes.js'
+import { listPrograms, manualBulkCreateRecords } from './controllers/recordController.js'
 import { errorHandler } from './middleware/errorHandler.js'
 import { activityLogger } from './middleware/activityLogger.js'
+import { requireAuth } from './middleware/auth.js'
 
 const app = express()
 
@@ -29,6 +31,8 @@ app.get('/health', (req, res) => {
 app.use('/api/auth', authRoutes)
 app.use('/api/records', recordRoutes)
 app.use('/api/admin', adminRoutes)
+app.get('/api/programas', requireAuth, listPrograms)
+app.post('/api/carga-masiva', requireAuth, manualBulkCreateRecords)
 
 app.use(errorHandler)
 
